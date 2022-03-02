@@ -1,0 +1,7 @@
+__pycache__/
+build/
+dist/
+caspy.egg-info/
+output/
+*.cdm
+*.oem
