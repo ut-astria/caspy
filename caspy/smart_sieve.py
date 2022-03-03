@@ -14,8 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+from datetime import datetime, timezone
 import json
-from os import path
 from mako.template import Template
 import numpy as np
 import numpy.linalg as la
@@ -24,7 +24,7 @@ from orbdetpy.conversion import get_J2000_epoch_offset, get_UTC_string, ltr_to_m
 from orbdetpy.estimation import determine_orbit
 from orbdetpy.utilities import interpolate_ephemeris
 from orbdetpy.rpc.messages_pb2 import Parameter
-from datetime import datetime, timezone
+from os import path
 
 _MU_EARTH = 3.986004418E14
 
