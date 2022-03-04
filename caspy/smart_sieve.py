@@ -130,7 +130,7 @@ def screen_pair(params):
                 cov2_rtn = R.dot(prop_cov2).dot(R.transpose())
                 relative_pos = rotation.dot(np.subtract(pos_obj2, pos_obj1))
                 relative_vel = rotation.dot(np.subtract(vel_obj2, vel_obj1))
-                coll_prob = 0.0 # compute_Pc(state_ca1, state_ca2, prop_cov1, prop_cov2, HBR)
+                coll_prob = compute_Pc(state_ca1, state_ca2, prop_cov1, prop_cov2, HBR)
 
                 obj1_map = {"CREATION_DATE":datetime.now(timezone.utc).isoformat(timespec="milliseconds")[:-6],"MESSAGE_ID":message_id,"TCA":time_ca,
                             "MISS_DISTANCE":la.norm(np.subtract(pos_obj1,pos_obj2)),"RELATIVE_SPEED":la.norm(np.subtract(vel_obj1,vel_obj2)),
@@ -252,25 +252,22 @@ def find_covariance(oem_file, time, default):
 # Produces CDM with input arguments
 # Chan's Approximation, outlined in Alfano 2013
 def compute_Pc(state1, state2, covar1, covar2, HBR):
-    try:
-        stateRel = np.subtract(state2, state1)
-        subindex = np.ix_([0,1,2], [0,1,2])
-        Prel = np.add(covar1[subindex], covar2[subindex])
+    stateRel = np.subtract(state2, state1)
+    subindex = np.ix_([0,1,2], [0,1,2])
+    Prel = np.add(covar1[subindex], covar2[subindex])
 
-        ux = np.divide(stateRel[:3], la.norm(stateRel[:3]))
-        uy = np.cross(stateRel[:3], stateRel[3:])
-        uy = np.divide(uy, la.norm(uy))
+    ux = np.divide(stateRel[:3], la.norm(stateRel[:3]))
+    uy = np.cross(stateRel[:3], stateRel[3:])
+    uy = np.divide(uy, la.norm(uy))
 
-        T = np.vstack((ux, uy))
-        w, v = la.eigh(T.dot(Prel).dot(T.transpose()))
-        stateRot = v.transpose().dot(T.dot(stateRel[:3]))
-        xbar, ybar = stateRot
-        sigx, sigy = np.sqrt(w)
+    T = np.vstack((ux, uy))
+    w, v = la.eigh(T.dot(Prel).dot(T.transpose()))
+    stateRot = v.transpose().dot(T.dot(stateRel[:3]))
+    xbar, ybar = stateRot
+    sigx, sigy = np.sqrt(w)
 
-        u1 = HBR**2/(sigx*sigy)
-        u2 = xbar**2/sigx**2 + ybar**2/sigy**2
-        term0 = np.exp(-u2/2)*(1 - np.exp(-u1/2))
-        term1 = u1**2*u2*np.exp(0.25*u2*(u1 - 2))/8
-        return(term0 + term1)
-    except Exception as _:
-        return(0.0)
+    u1 = HBR**2/(sigx*sigy)
+    u2 = xbar**2/sigx**2 + ybar**2/sigy**2
+    term0 = np.exp(-u2/2)*(1 - np.exp(-u1/2))
+    term1 = u1**2*u2*np.exp(0.25*u2*(u1 - 2))/8
+    return(term0 + term1)

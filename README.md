@@ -19,10 +19,3 @@ Usage
 2. Space-Track publishes operator ephmerides in the "Modified ITC" format detailed
    in <https://www.space-track.org/documents/Spaceflight_Safety_Handbook_for_Operators.pdf>.
    Use `utils/meme_to_oem.py` to convert these files to OEM format.
-
-Known Issues
-------------
-
-1. Probability of collision is work in progress and therefore COLLISION_PROBABILITY
-   is not included in CDM files.
-
