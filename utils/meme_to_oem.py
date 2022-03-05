@@ -24,7 +24,6 @@ from orbdetpy.conversion import get_J2000_epoch_offset, get_lvlh_rotation, ltr_t
 from orbdetpy.rpc.messages_pb2 import EstimationOutput
 from os import cpu_count, path
 import sys
-import tqdm
 
 def convert(fname):
     toks = fname.split("_")
@@ -53,5 +52,5 @@ def convert(fname):
 if (__name__ == "__main__"):
     multiprocessing.set_start_method("spawn")
     with multiprocessing.Pool(processes=cpu_count()) as pool:
-        for _ in tqdm.tqdm(pool.map(convert, glob.glob(path.join(sys.argv[1], "*.txt"))), desc="Files", unit="file", disable=None):
+        for _ in pool.map(convert, glob.glob(path.join(sys.argv[1], "*.txt"))):
             pass
