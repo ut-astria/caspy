@@ -52,5 +52,5 @@ def convert(fname):
 if (__name__ == "__main__"):
     multiprocessing.set_start_method("spawn")
     with multiprocessing.Pool(processes=cpu_count()) as pool:
-        for _ in pool.map(convert, glob.glob(path.join(sys.argv[1], "*.txt"))):
+        for _ in pool.map(convert, glob.glob(path.join(sys.argv[1] if (len(sys.argv) > 1) else ".", "*.txt"))):
             pass

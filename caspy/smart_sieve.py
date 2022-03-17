@@ -93,7 +93,6 @@ def screen_pair(params):
 
                 screen_start, screen_stop = get_UTC_string((times[0], times[-1]))
                 time_pre_ca, time_ca = get_UTC_string((timePreCloseApproach, timeCloseApproach))
-                message_id = f"""{time_ca}:{object1["objName"]}/{object2["objName"]}"""
 
                 # Propagate states and covariances to TCA
                 def_cov = [pos_sigma**2]*3 + [vel_sigma**2]*3
@@ -130,9 +129,9 @@ def screen_pair(params):
                 cov2_rtn = R.dot(prop_cov2).dot(R.transpose())
                 relative_pos = rotation.dot(np.subtract(pos_obj2, pos_obj1))
                 relative_vel = rotation.dot(np.subtract(vel_obj2, vel_obj1))
-                coll_prob = compute_Pc(state_ca1, state_ca2, prop_cov1, prop_cov2, HBR)
+                coll_prob = 0.0 # compute_Pc(state_ca1, state_ca2, prop_cov1, prop_cov2, HBR)
 
-                obj1_map = {"CREATION_DATE":datetime.now(timezone.utc).isoformat(timespec="milliseconds")[:-6],"MESSAGE_ID":message_id,"TCA":time_ca,
+                obj1_map = {"CREATION_DATE":datetime.now(timezone.utc).isoformat(timespec="milliseconds")[:-6],"TCA":time_ca,
                             "MISS_DISTANCE":la.norm(np.subtract(pos_obj1,pos_obj2)),"RELATIVE_SPEED":la.norm(np.subtract(vel_obj1,vel_obj2)),
                             "RELATIVE_POSITION_R":relative_pos[0],"RELATIVE_POSITION_T":relative_pos[1],"RELATIVE_POSITION_N":relative_pos[2],
                             "RELATIVE_VELOCITY_R":relative_vel[0],"RELATIVE_VELOCITY_T":relative_vel[1],"RELATIVE_VELOCITY_N":relative_vel[2],
