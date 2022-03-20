@@ -1,7 +1,7 @@
 CCSDS_CDM_VERS               = 1.0
 CREATION_DATE                = ${obj1["CREATION_DATE"]}
 ORIGINATOR                   = UT-Austin
-MESSAGE_ID                   = UTA_caspy_${obj1["TCA"]}_${obj1["OBJECT_DESIGNATOR"]}_${obj2["OBJECT_DESIGNATOR"]}
+MESSAGE_ID                   = UTA_caspy_${obj1["TCA"]}_${obj1["headers"]["OBJECT_ID"]}_${obj2["headers"]["OBJECT_ID"]}
 TCA                          = ${obj1["TCA"]}
 MISS_DISTANCE                = ${obj1["MISS_DISTANCE"]} [m]
 RELATIVE_SPEED               = ${obj1["RELATIVE_SPEED"]} [m/s]
@@ -13,19 +13,22 @@ RELATIVE_VELOCITY_T          = ${obj1["RELATIVE_VELOCITY_T"]} [m/s]
 RELATIVE_VELOCITY_N          = ${obj1["RELATIVE_VELOCITY_N"]} [m/s]
 START_SCREEN_PERIOD          = ${obj1["START_SCREEN_PERIOD"]}
 STOP_SCREEN_PERIOD           = ${obj1["STOP_SCREEN_PERIOD"]}
-## COLLISION_PROBABILITY        = ${obj1["COLLISION_PROBABILITY"]}
-## COLLISION_PROBABILITY_METHOD = CHAN-1997
+COLLISION_PROBABILITY        = ${obj1["COLLISION_PROBABILITY"]}
+COLLISION_PROBABILITY_METHOD = CHAN-1997
+% for key, val in obj1["headers"].get("extra", {}).items():
+COMMENT ${key} ${val}
+% endfor
 OBJECT                       = OBJECT1
-OBJECT_DESIGNATOR            = ${obj1["OBJECT_DESIGNATOR"]}
+OBJECT_DESIGNATOR            = ${obj1["headers"]["OBJECT_ID"]}
 CATALOG_NAME                 = SATCAT
-OBJECT_NAME                  = ${obj1["OBJECT_NAME"]}
+OBJECT_NAME                  = ${obj1["headers"]["OBJECT_NAME"]}
 EPHEMERIS_NAME               = NONE
 COVARIANCE_METHOD            = CALCULATED
 REF_FRAME                    = EME2000
 GRAVITY_MODEL                = EGM-96: 20D 20O
 N_BODY_PERTURBATIONS         = MOON,SUN
-TIME_LASTOB_START            = ${obj1["TIME_LASTOB_START"]}
-TIME_LASTOB_END              = ${obj1["TIME_LASTOB_END"]}
+TIME_LASTOB_START            = ${obj1["headers"]["START_TIME"]}
+TIME_LASTOB_END              = ${obj1["headers"]["STOP_TIME"]}
 X                            = ${obj1["X"]} [km]
 Y                            = ${obj1["Y"]} [km]
 Z                            = ${obj1["Z"]} [km]
@@ -53,17 +56,20 @@ CNDOT_N                      = ${obj1["CNDOT_N"]} [m**2/s]
 CNDOT_RDOT                   = ${obj1["CNDOT_RDOT"]} [m**2/s**2]
 CNDOT_TDOT                   = ${obj1["CNDOT_TDOT"]} [m**2/s**2]
 CNDOT_NDOT                   = ${obj1["CNDOT_NDOT"]} [m**2/s**2]
+% for key, val in obj2["headers"].get("extra", {}).items():
+COMMENT ${key} ${val}
+% endfor
 OBJECT                       = OBJECT2
-OBJECT_DESIGNATOR            = ${obj2["OBJECT_DESIGNATOR"]}
+OBJECT_DESIGNATOR            = ${obj2["headers"]["OBJECT_ID"]}
 CATALOG_NAME                 = SATCAT
-OBJECT_NAME                  = ${obj2["OBJECT_NAME"]}
+OBJECT_NAME                  = ${obj2["headers"]["OBJECT_NAME"]}
 EPHEMERIS_NAME               = NONE
 COVARIANCE_METHOD            = CALCULATED
 REF_FRAME                    = EME2000
 GRAVITY_MODEL                = EGM-96: 20D 20O
 N_BODY_PERTURBATIONS         = MOON,SUN
-TIME_LASTOB_START            = ${obj2["TIME_LASTOB_START"]}
-TIME_LASTOB_END              = ${obj2["TIME_LASTOB_END"]}
+TIME_LASTOB_START            = ${obj2["headers"]["START_TIME"]}
+TIME_LASTOB_END              = ${obj2["headers"]["STOP_TIME"]}
 X                            = ${obj2["X"]} [km]
 Y                            = ${obj2["Y"]} [km]
 Z                            = ${obj2["Z"]} [km]

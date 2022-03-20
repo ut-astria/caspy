@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import bisect
 from datetime import datetime, timezone
 import json
 from mako.template import Template
@@ -29,8 +30,8 @@ from os import path
 _MU_EARTH = 3.986004418E14
 
 def init_process():
-    global cdm_template
-    cdm_template = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm"))
+    global _cdm_template
+    _cdm_template = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm"))
 
 def screen_pair(params):
     object1, object2, times, outputPath, interpOrder, interpTimeScale, criticalDistance, pos_sigma, vel_sigma, HBR = params
@@ -91,18 +92,18 @@ def screen_pair(params):
                     state2PreCloseApproach = interpS2Min[indexOffset - 1]
                     timePreCloseApproach = interpTimeMin[indexOffset - 1]
 
+                time_ca = get_UTC_string(timeCloseApproach)
                 screen_start, screen_stop = get_UTC_string((times[0], times[-1]))
-                time_pre_ca, time_ca = get_UTC_string((timePreCloseApproach, timeCloseApproach))
 
                 # Propagate states and covariances to TCA
                 def_cov = [pos_sigma**2]*3 + [vel_sigma**2]*3
                 cfg = [configure(prop_start=timePreCloseApproach, prop_initial_state=state1PreCloseApproach, prop_inertial_frame=Frame.EME2000,
-                                 estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=find_covariance(object1["oemFile"], time_pre_ca, def_cov),
+                                 estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=get_covariance(object1, timePreCloseApproach, def_cov),
                                  drag_coefficient=Parameter(value=2.0, min=1.0, max=3.0, estimation=EstimationType.UNDEFINED),
                                  rp_coeff_reflection=Parameter(value=1.5, min=1.0, max=2.0, estimation=EstimationType.UNDEFINED),
                                  estm_process_noise=(1E-8,)*6, estm_DMC_corr_time=0, estm_DMC_sigma_pert=0),
                        configure(prop_start=timePreCloseApproach, prop_initial_state=state2PreCloseApproach, prop_inertial_frame=Frame.EME2000,
-                                 estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=find_covariance(object2["oemFile"], time_pre_ca, def_cov),
+                                 estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=get_covariance(object2, timePreCloseApproach, def_cov),
                                  drag_coefficient=Parameter(value=2.0, min=1.0, max=3.0, estimation=EstimationType.UNDEFINED),
                                  rp_coeff_reflection=Parameter(value=1.5, min=1.0, max=2.0, estimation=EstimationType.UNDEFINED),
                                  estm_process_noise=(1E-8,)*6, estm_DMC_corr_time=0, estm_DMC_sigma_pert=0)]
@@ -129,36 +130,35 @@ def screen_pair(params):
                 cov2_rtn = R.dot(prop_cov2).dot(R.transpose())
                 relative_pos = rotation.dot(np.subtract(pos_obj2, pos_obj1))
                 relative_vel = rotation.dot(np.subtract(vel_obj2, vel_obj1))
-                coll_prob = 0.0 # compute_Pc(state_ca1, state_ca2, prop_cov1, prop_cov2, HBR)
+                coll_prob = compute_Pc(state_ca1, state_ca2, prop_cov1, prop_cov2, HBR)
 
-                obj1_map = {"CREATION_DATE":datetime.now(timezone.utc).isoformat(timespec="milliseconds")[:-6],"TCA":time_ca,
-                            "MISS_DISTANCE":la.norm(np.subtract(pos_obj1,pos_obj2)),"RELATIVE_SPEED":la.norm(np.subtract(vel_obj1,vel_obj2)),
-                            "RELATIVE_POSITION_R":relative_pos[0],"RELATIVE_POSITION_T":relative_pos[1],"RELATIVE_POSITION_N":relative_pos[2],
-                            "RELATIVE_VELOCITY_R":relative_vel[0],"RELATIVE_VELOCITY_T":relative_vel[1],"RELATIVE_VELOCITY_N":relative_vel[2],
-                            "START_SCREEN_PERIOD": screen_start, "STOP_SCREEN_PERIOD": screen_stop, "COLLISION_PROBABILITY": coll_prob,
-                            "OBJECT_DESIGNATOR": object1["objID"],"OBJECT_NAME": object1["objName"],"TIME_LASTOB_START":object1["startTime"],
-                            "TIME_LASTOB_END":object1["endTime"],"X":pos_obj1[0]/1000,"Y":pos_obj1[1]/1000,"Z":pos_obj1[2]/1000,
-                            "X_DOT":vel_obj1[0]/1000,"Y_DOT":vel_obj1[1]/1000,"Z_DOT":vel_obj1[2]/1000,"CR_R":cov1_rtn[0][0],"CT_R":cov1_rtn[1][0],
-                            "CT_T":cov1_rtn[1][1],"CN_R":cov1_rtn[2][0],"CN_T":cov1_rtn[2][1],"CN_N":cov1_rtn[2][2],"CRDOT_R":cov1_rtn[3][0],
-                            "CRDOT_T":cov1_rtn[3][1],"CRDOT_N":cov1_rtn[3][2],"CRDOT_RDOT":cov1_rtn[3][3],"CTDOT_R":cov1_rtn[4][0],
-                            "CTDOT_T":cov1_rtn[4][1],"CTDOT_N":cov1_rtn[4][2],"CTDOT_RDOT":cov1_rtn[4][3],"CTDOT_TDOT":cov1_rtn[4][4],
-                            "CNDOT_R":cov1_rtn[5][0],"CNDOT_T":cov1_rtn[5][1],"CNDOT_N":cov1_rtn[5][2],"CNDOT_RDOT":cov1_rtn[5][3],
-                            "CNDOT_TDOT":cov1_rtn[5][4],"CNDOT_NDOT":cov1_rtn[5][5]}
+                object1.update({"CREATION_DATE":datetime.now(timezone.utc).isoformat(timespec="milliseconds")[:-6], "TCA": time_ca,
+                                "MISS_DISTANCE":la.norm(np.subtract(pos_obj1,pos_obj2)),"RELATIVE_SPEED":la.norm(np.subtract(vel_obj1,vel_obj2)),
+                                "RELATIVE_POSITION_R":relative_pos[0],"RELATIVE_POSITION_T":relative_pos[1],"RELATIVE_POSITION_N":relative_pos[2],
+                                "RELATIVE_VELOCITY_R":relative_vel[0],"RELATIVE_VELOCITY_T":relative_vel[1],"RELATIVE_VELOCITY_N":relative_vel[2],
+                                "START_SCREEN_PERIOD": screen_start, "STOP_SCREEN_PERIOD": screen_stop, "COLLISION_PROBABILITY": coll_prob,
+                                "X": pos_obj1[0]/1000, "Y": pos_obj1[1]/1000, "Z": pos_obj1[2]/1000,
+                                "X_DOT":vel_obj1[0]/1000,"Y_DOT":vel_obj1[1]/1000,"Z_DOT":vel_obj1[2]/1000,"CR_R":cov1_rtn[0][0],"CT_R":cov1_rtn[1][0],
+                                "CT_T":cov1_rtn[1][1],"CN_R":cov1_rtn[2][0],"CN_T":cov1_rtn[2][1],"CN_N":cov1_rtn[2][2],"CRDOT_R":cov1_rtn[3][0],
+                                "CRDOT_T":cov1_rtn[3][1],"CRDOT_N":cov1_rtn[3][2],"CRDOT_RDOT":cov1_rtn[3][3],"CTDOT_R":cov1_rtn[4][0],
+                                "CTDOT_T":cov1_rtn[4][1],"CTDOT_N":cov1_rtn[4][2],"CTDOT_RDOT":cov1_rtn[4][3],"CTDOT_TDOT":cov1_rtn[4][4],
+                                "CNDOT_R":cov1_rtn[5][0],"CNDOT_T":cov1_rtn[5][1],"CNDOT_N":cov1_rtn[5][2],"CNDOT_RDOT":cov1_rtn[5][3],
+                                "CNDOT_TDOT": cov1_rtn[5][4], "CNDOT_NDOT": cov1_rtn[5][5]})
 
-                obj2_map = {"OBJECT_DESIGNATOR": object2["objID"], "OBJECT_NAME": object2["objName"], "TIME_LASTOB_START": object2["startTime"],
-                            "TIME_LASTOB_END":object2["endTime"],"X":pos_obj2[0]/1000,"Y":pos_obj2[1]/1000,"Z":pos_obj2[2]/1000,
-                            "X_DOT":vel_obj2[0]/1000,"Y_DOT":vel_obj2[1]/1000,"Z_DOT":vel_obj2[2]/1000,"CR_R": cov2_rtn[0][0],"CT_R":cov2_rtn[1][0],
-                            "CT_T":cov2_rtn[1][1],"CN_R":cov2_rtn[2][0],"CN_T":cov2_rtn[2][1],"CN_N":cov2_rtn[2][2],"CRDOT_R":cov2_rtn[3][0],
-                            "CRDOT_T":cov2_rtn[3][1],"CRDOT_N":cov2_rtn[3][2],"CRDOT_RDOT":cov2_rtn[3][3],"CTDOT_R":cov2_rtn[4][0],
-                            "CTDOT_T":cov2_rtn[4][1],"CTDOT_N":cov2_rtn[4][2],"CTDOT_RDOT":cov2_rtn[4][3],"CTDOT_TDOT":cov2_rtn[4][4],
-                            "CNDOT_R":cov2_rtn[5][0],"CNDOT_T":cov2_rtn[5][1],"CNDOT_N":cov2_rtn[5][2],"CNDOT_RDOT":cov2_rtn[5][3],
-                            "CNDOT_TDOT":cov2_rtn[5][4],"CNDOT_NDOT":cov2_rtn[5][5]}
+                object2.update({"X": pos_obj2[0]/1000, "Y": pos_obj2[1]/1000, "Z": pos_obj2[2]/1000,
+                                "X_DOT":vel_obj2[0]/1000,"Y_DOT":vel_obj2[1]/1000,"Z_DOT":vel_obj2[2]/1000,"CR_R": cov2_rtn[0][0],"CT_R":cov2_rtn[1][0],
+                                "CT_T":cov2_rtn[1][1],"CN_R":cov2_rtn[2][0],"CN_T":cov2_rtn[2][1],"CN_N":cov2_rtn[2][2],"CRDOT_R":cov2_rtn[3][0],
+                                "CRDOT_T":cov2_rtn[3][1],"CRDOT_N":cov2_rtn[3][2],"CRDOT_RDOT":cov2_rtn[3][3],"CTDOT_R":cov2_rtn[4][0],
+                                "CTDOT_T":cov2_rtn[4][1],"CTDOT_N":cov2_rtn[4][2],"CTDOT_RDOT":cov2_rtn[4][3],"CTDOT_TDOT":cov2_rtn[4][4],
+                                "CNDOT_R":cov2_rtn[5][0],"CNDOT_T":cov2_rtn[5][1],"CNDOT_N":cov2_rtn[5][2],"CNDOT_RDOT":cov2_rtn[5][3],
+                                "CNDOT_TDOT": cov2_rtn[5][4], "CNDOT_NDOT": cov2_rtn[5][5]})
 
                 eventMinDistance, eventOccurrence = criticalDistance, False
-                cdm_file = path.join(outputPath, f"""{object1["objName"]}_{object2["objName"]}_{time_ca[:19].replace("-", "").replace(":", "")}.cdm""")
+                cdm_file = path.join(outputPath, f"""{object1["headers"]["OBJECT_NAME"]}_{object2["headers"]["OBJECT_NAME"]}_"""
+                                     f"""{time_ca[:19].replace("-", "").replace(":", "")}.cdm""")
                 with open(cdm_file, "w") as fp:
-                    fp.write(cdm_template.render(obj1=obj1_map, obj2=obj2_map))
-                summary.append([object1["oemFile"], object2["oemFile"], cdm_file, time_ca, obj1_map["MISS_DISTANCE"], obj1_map["RELATIVE_SPEED"]])
+                    fp.write(_cdm_template.render(obj1=object1, obj2=object2))
+                summary.append([object1["oemFile"], object2["oemFile"], cdm_file, time_ca, object1["MISS_DISTANCE"], object1["RELATIVE_SPEED"]])
         i+=1
     return(summary)
 
@@ -230,23 +230,9 @@ def find_TCA(t, s1, s2, delt, interpTimeScale, interpOrder, criticalDistance, rp
                     timeCloseApproach, minDistance = checkTCA
     return(timeCloseApproach, minDistance)
 
-def find_covariance(oem_file, time, default):
-    with open(oem_file, "r") as fp:
-        lines = [l.strip() for l in fp.readlines() if (l.strip())]
-
-    start, ep0_idx = False, -1
-    for idx, line in enumerate(lines):
-        if (line.startswith("COVARIANCE_STOP")):
-            break
-        if (start and line.startswith("EPOCH")):
-            epoch1 = line.split("=")[-1].strip()
-            if (ep0_idx == -1 or time >= epoch1):
-                ep0_idx = idx
-            if (time < epoch1):
-                return([float(t)*1E6 for t in " ".join((l for l in lines[ep0_idx + 1:idx] if not ("=" in l or l.startswith("COMMENT")))).split()])
-        if (line.startswith("COVARIANCE_START")):
-            start = True
-    return(default)
+def get_covariance(obj, time, default):
+    index = bisect.bisect_right(obj["covTime"], time)
+    return(obj["cov"][index - 1] if (index) else default)
 
 # Produces CDM with input arguments
 # Chan's Approximation, outlined in Alfano 2013
@@ -267,6 +253,5 @@ def compute_Pc(state1, state2, covar1, covar2, HBR):
 
     u1 = HBR**2/(sigx*sigy)
     u2 = xbar**2/sigx**2 + ybar**2/sigy**2
-    term0 = np.exp(-u2/2)*(1 - np.exp(-u1/2))
-    term1 = u1**2*u2*np.exp(0.25*u2*(u1 - 2))/8
-    return(term0 + term1)
+    pc = np.exp(-u2/2)*(1 - np.exp(-u1/2)) + u1**2*u2*np.exp(0.25*u2*(u1 - 2))/8
+    return(0.0 if (np.isinf(pc)) else pc)
