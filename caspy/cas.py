@@ -16,6 +16,7 @@
 
 import argparse
 from datetime import datetime
+import filecmp
 import glob
 import itertools
 import multiprocessing
@@ -41,7 +42,8 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
         primary.append({"headers": headers, "times": pri_time, "states": pri_state, "oemFile": fname, "covTime": cov_time, "cov": cov})
 
     # Process primary/secondary combinations in parallel chunks depending on CPUs
-    tasks, summary = list(itertools.product(primary, sec_files)), []
+    summary = []
+    tasks = list((p, s) for p, s in itertools.product(primary, sec_files) if (not filecmp.cmp(p["oemFile"], s, shallow=False)))
     for task in [tasks[i:i + os.cpu_count()] for i in range(0, len(tasks), os.cpu_count())]:
         mp_inputs = []
         for fname, headers, sec_time, sec_state, cov_time, cov in pool.map(
