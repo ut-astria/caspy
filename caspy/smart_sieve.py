@@ -37,10 +37,10 @@ def screen_pair(params):
     object1, object2, times, outputPath, interpOrder, interpTimeScale, criticalDistance, pos_sigma, vel_sigma, HBR = params
     states1, states2 = object1["states"], object2["states"]
 
-    #Middle index of interpolation process
+    # Middle index of interpolation process
     indexOffset = int((interpOrder - 1)/2)
 
-    #Apogee Perigee Filter
+    # Apogee Perigee Filter
     underThreshold, rp1, rp2 = apogee_filter(states1[0], states2[0], times[1] - times[0], criticalDistance)
     if (not underThreshold):
         return(None)
@@ -49,14 +49,14 @@ def screen_pair(params):
     i, eventMinDistance = indexOffset, criticalDistance
     interpTimeMin, interpS1Min, interpS2Min, summary = [], [], [], []
 
-    #Iterate through each time step
+    # Iterate through each time step
     while (i < len(times) - indexOffset):
-        #Run smart Sieve
+        # Run smart Sieve
         if (i >= min(len(states1), len(states2))):
             return(summary)
         passSieve, numIndexSkip = sift(states1[i], states2[i], rp1, rp2, times[1] - times[0], criticalDistance)
 
-        #If pass continue. If fail, skip index
+        # If pass continue. If fail, skip index
         if (not passSieve):
             i += numIndexSkip
             continue
@@ -65,7 +65,7 @@ def screen_pair(params):
         interpS1 = [states1[i + j] for j in range(-indexOffset, indexOffset + 1)]
         interpS2 = [states2[i + j] for j in range(-indexOffset, indexOffset + 1)]
 
-        #If smart sieve passed, run binary search
+        # If smart sieve passed, run binary search
         TCAResults = find_TCA(interpTime, interpS1, interpS2, times[1] - times[0], interpTimeScale, interpOrder, criticalDistance, rp1, rp2)
 
         # Event found
@@ -154,12 +154,12 @@ def screen_pair(params):
                                 "CNDOT_TDOT": cov2_rtn[5][4], "CNDOT_NDOT": cov2_rtn[5][5]})
 
                 eventMinDistance, eventOccurrence = criticalDistance, False
-                cdm_file = path.join(outputPath, f"""{object1["headers"]["OBJECT_NAME"]}_{object2["headers"]["OBJECT_NAME"]}_"""
+                cdm_file = path.join(outputPath, f"""{object1["headers"]["OBJECT_ID"]}_{object2["headers"]["OBJECT_ID"]}_"""
                                      f"""{time_ca[:19].replace("-", "").replace(":", "")}.cdm""")
                 with open(cdm_file, "w") as fp:
                     fp.write(_cdm_template.render(obj1=object1, obj2=object2))
                 summary.append([object1["oemFile"], object2["oemFile"], cdm_file, time_ca, object1["MISS_DISTANCE"], object1["RELATIVE_SPEED"]])
-        i+=1
+        i += 1
     return(summary)
 
 # Function to read in object states, and run apogee/perigee filter based upon critical distance
