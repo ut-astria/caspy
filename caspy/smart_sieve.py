@@ -116,6 +116,7 @@ def screen_pair(params):
                 prop_cov2 = np.array(ltr_to_matrix(fit[1][-1].propagated_covariance))
                 pos_obj1, vel_obj1 = state_ca1[:3], state_ca1[3:]
                 pos_obj2, vel_obj2 = state_ca2[:3], state_ca2[3:]
+                miss_dist = la.norm(np.subtract(pos_obj1, pos_obj2))
 
                 r_hat = pos_obj1/la.norm(pos_obj1)
                 cross_pro = np.cross(pos_obj1, vel_obj1)
@@ -133,7 +134,7 @@ def screen_pair(params):
                 coll_prob = compute_Pc(state_ca1, state_ca2, prop_cov1, prop_cov2, HBR)
 
                 object1.update({"CREATION_DATE":datetime.now(timezone.utc).isoformat(timespec="milliseconds")[:-6], "TCA": time_ca,
-                                "MISS_DISTANCE":la.norm(np.subtract(pos_obj1,pos_obj2)),"RELATIVE_SPEED":la.norm(np.subtract(vel_obj1,vel_obj2)),
+                                "MISS_DISTANCE": miss_dist, "RELATIVE_SPEED": la.norm(np.subtract(vel_obj1, vel_obj2)),
                                 "RELATIVE_POSITION_R":relative_pos[0],"RELATIVE_POSITION_T":relative_pos[1],"RELATIVE_POSITION_N":relative_pos[2],
                                 "RELATIVE_VELOCITY_R":relative_vel[0],"RELATIVE_VELOCITY_T":relative_vel[1],"RELATIVE_VELOCITY_N":relative_vel[2],
                                 "START_SCREEN_PERIOD": screen_start, "STOP_SCREEN_PERIOD": screen_stop, "COLLISION_PROBABILITY": coll_prob,
@@ -154,11 +155,12 @@ def screen_pair(params):
                                 "CNDOT_TDOT": cov2_rtn[5][4], "CNDOT_NDOT": cov2_rtn[5][5]})
 
                 eventMinDistance, eventOccurrence = criticalDistance, False
-                cdm_file = path.join(outputPath, f"""{object1["headers"]["OBJECT_ID"]}_{object2["headers"]["OBJECT_ID"]}_"""
-                                     f"""{time_ca[:19].replace("-", "").replace(":", "")}.cdm""")
-                with open(cdm_file, "w") as fp:
-                    fp.write(_cdm_template.render(obj1=object1, obj2=object2))
-                summary.append([object1["oemFile"], object2["oemFile"], cdm_file, time_ca, object1["MISS_DISTANCE"], object1["RELATIVE_SPEED"]])
+                if (miss_dist < criticalDistance):
+                    cdm_file = path.join(outputPath, f"""{object1["headers"]["OBJECT_ID"]}_{object2["headers"]["OBJECT_ID"]}_"""
+                                         f"""{time_ca[:19].replace("-", "").replace(":", "")}.cdm""")
+                    with open(cdm_file, "w") as fp:
+                        fp.write(_cdm_template.render(obj1=object1, obj2=object2))
+                    summary.append([object1["oemFile"], object2["oemFile"], cdm_file, time_ca, miss_dist, object1["RELATIVE_SPEED"]])
         i += 1
     return(summary)
 
