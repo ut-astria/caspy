@@ -39,7 +39,10 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
     if (not hasattr(sec_files, "__len__")):
         sec_files = list(sec_files)
 
-    multiprocessing.set_start_method("spawn")
+    try:
+        multiprocessing.set_start_method("spawn")
+    except Exception as _:
+        pass
     pool = multiprocessing.Pool(chunk_size, sms.init_process)
     done, task_cache, pri_task, sec_task, mp_input, summary = set(), [], [], [], [], []
 
@@ -92,7 +95,10 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
     if (not hasattr(sec_tles, "__len__")):
         sec_tles = list(sec_tles)
 
-    multiprocessing.set_start_method("spawn")
+    try:
+        multiprocessing.set_start_method("spawn")
+    except Exception as _:
+        pass
     pool = multiprocessing.Pool(chunk_size, sms.init_process)
     done, task_cache, pri_task, sec_task, mp_input, summary = set(), [], [], [], [], []
 
