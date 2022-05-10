@@ -55,11 +55,22 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
 
             if (len(pri_task) == chunk_size or (pri_task and pri_idx == len(pri_files) - 1 and sec_idx == len(sec_files) - 1)):
                 secondary = pool.map(import_oem, zip(sec_task, (extra_keys,)*len(sec_task), (window,)*len(sec_task)))
+                if (any(not s for s in secondary)):
+                    pri_task.clear()
+                    sec_task.clear()
+                    continue
+
                 if (pri_task != task_cache):
                     primary = pool.map(import_oem, zip(pri_task, (extra_keys,)*len(pri_task), (window,)*len(pri_task)))
+                    if (any(not p for p in primary)):
+                        pri_task.clear()
+                        sec_task.clear()
+                        continue
+
                     pri_time = [np.arange(p[2][0], p[2][-1], 180.0).tolist() for p in primary]
                     pri_state = pool.map(interpolate, ((Frame.EME2000, p[2], p[3], inter_order, Frame.EME2000, e, 0.0, 0.0)
                                                        for e, p in zip(pri_time, primary)))
+                    task_cache = pri_task.copy()
 
                 for pri, sec, ptm, pst in zip(primary, secondary, pri_time, pri_state):
                     idx0, idx1 = bisect.bisect_left(ptm, sec[2][0]), bisect.bisect_right(ptm, sec[2][-1])
@@ -77,7 +88,6 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
                         if (result):
                             summary.extend(result)
 
-                task_cache = pri_task.copy()
                 pri_task.clear()
                 sec_task.clear()
                 mp_input.clear()
@@ -112,8 +122,18 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
             if (len(pri_task) == chunk_size or (pri_task and pri_idx == len(pri_tles) - 1 and sec_idx == len(sec_tles) - 1)):
                 if (pri_task != task_cache):
                     primary = pool.map(propagate_tle, zip(pri_task, (window,)*len(pri_task), (None,)*len(pri_task), (None,)*len(pri_task)))
+                    if (any(not p for p in primary)):
+                        pri_task.clear()
+                        sec_task.clear()
+                        continue
+                    task_cache = pri_task.copy()
+
                 secondary = pool.map(propagate_tle,
                                      zip(sec_task, (window,)*len(pri_task), (p[2][0] for p in primary), (p[2][-1] for p in primary)))
+                if (any(not s for s in secondary)):
+                    pri_task.clear()
+                    sec_task.clear()
+                    continue
 
                 for pri, sec in zip(primary, secondary):
                     pri_map = {"oemFile": pri[0], "headers": pri[1], "states": pri[3], "covTime": [], "cov": []}
@@ -125,7 +145,6 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
                         if (result):
                             summary.extend(result)
 
-                task_cache = pri_task.copy()
                 pri_task.clear()
                 sec_task.clear()
                 mp_input.clear()
@@ -137,72 +156,85 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
             fp.write(",".join(str(s) for s in entry) + "\n")
 
 def import_oem(params):
-    oem_file, extra_keys, window = params
-    with open(oem_file, "r") as fp:
-        lines = [l.strip() for l in fp.readlines() if (l.strip())]
+    try:
+        oem_file, extra_keys, window = params
+        with open(oem_file, "r") as fp:
+            lines = [l.strip() for l in fp.readlines() if (l.strip())]
 
-    headers, times, states, cov_start, cov_times, cov, end_time = {}, [], [], False, [], [], None
-    for idx, line in enumerate(lines):
-        # Import extra key/value pairs from comment lines
-        if (line.startswith("COMMENT")):
-            toks = line.split()
-            if (len(toks) > 2 and toks[1] in extra_keys):
-                headers.setdefault("extra", {})[toks[1]] = " ".join(toks[2:])
-            continue
+        headers, times, states, cov_start, cov_times, cov, end_time = {}, [], [], False, [], [], None
+        for idx, line in enumerate(lines):
+            # Import extra key/value pairs from comment lines
+            if (line.startswith("COMMENT")):
+                toks = line.split()
+                if (len(toks) > 2 and toks[1] in extra_keys):
+                    headers.setdefault("extra", {})[toks[1]] = " ".join(toks[2:])
+                continue
 
-        # Import covariance
-        if (line.startswith("COVARIANCE_START")):
-            cov_start = True
-        if (line.startswith("COVARIANCE_STOP")):
-            cov_times = get_J2000_epoch_offset(cov_times)
-            cov_times = [cov_times] if (isinstance(cov_times, float)) else list(cov_times)
-            break
-        if (cov_start):
-            if (line.startswith("EPOCH")):
-                ctime = line.split("=")[-1].strip()
-                if (ctime <= end_time):
-                    cov.append([])
-                    cov_times.append(ctime)
-                    for i in range(idx + 1, len(lines)):
-                        if not ("=" in lines[i] or lines[i].startswith("COMMENT")):
-                            cov[-1].extend(float(t)*1E6 for t in lines[i].split())
-                        if (len(cov[-1]) == 21):
-                            break
-            continue
+            # Import covariance
+            if (line.startswith("COVARIANCE_START")):
+                cov_start = True
 
-        # Import headers and states
-        if ("=" in line):
-            toks = [t.strip() for t in line.split("=")]
-            headers[toks[0]] = toks[1]
-        elif (line[0].isnumeric() and ":" in line):
-            toks = line.split()
-            if (not end_time):
-                end_time = (datetime.fromisoformat(toks[0]) + timedelta(hours=window)).isoformat(timespec="milliseconds")
-            if (toks[0] <= end_time):
-                times.append(toks[0])
-                states.append([float(t)*1000.0 for t in toks[1:]])
+            if (line.startswith("COVARIANCE_STOP")):
+                if (cov_times):
+                    cov_times = get_J2000_epoch_offset(cov_times)
+                    cov_times = [cov_times] if (isinstance(cov_times, float)) else list(cov_times)
+                break
 
-    times = get_J2000_epoch_offset(times)
+            if (cov_start):
+                if (line.startswith("EPOCH")):
+                    ctime = line.split("=")[-1].strip()
+                    if (ctime <= end_time):
+                        cov.append([])
+                        cov_times.append(ctime)
+                        for i in range(idx + 1, len(lines)):
+                            if not ("=" in lines[i] or lines[i].startswith("COMMENT")):
+                                cov[-1].extend(float(t)*1E6 for t in lines[i].split())
+                            if (len(cov[-1]) == 21):
+                                break
+                continue
+
+            # Import headers and states
+            if ("=" in line):
+                toks = [t.strip() for t in line.split("=")]
+                headers[toks[0]] = toks[1]
+            elif (line[0].isnumeric() and ":" in line):
+                toks = line.split()
+                if (not end_time):
+                    end_time = (datetime.fromisoformat(toks[0]) + timedelta(hours=window)).isoformat(timespec="milliseconds")
+                if (toks[0] <= end_time):
+                    times.append(toks[0])
+                    states.append([float(t)*1000.0 for t in toks[1:]])
+
+        times = get_J2000_epoch_offset(times)
+    except Exception as exc:
+        print(f"{oem_file}: {exc}")
+        return(None)
+
     return(oem_file, headers, [times] if (isinstance(times, float)) else list(times), states, cov_times, cov)
 
 def propagate_tle(params):
-    t0t1, times, states = [None]*2, [], []
-    tle, window, t0t1[0], t0t1[1] = params
-    if (t0t1[0] and t0t1[1]):
-        tint = get_UTC_string(t0t1)
-    else:
-        tint = ((datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]))).isoformat(timespec="milliseconds"),
-                (datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]), hours=window)).isoformat(timespec="milliseconds"))
-        t0t1 = get_J2000_epoch_offset(tint)
+    try:
+        t0t1, times, states = [None]*2, [], []
+        tle, window, t0t1[0], t0t1[1] = params
+        if (t0t1[0] and t0t1[1]):
+            tint = get_UTC_string(t0t1)
+        else:
+            tint = ((datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]))).isoformat(timespec="milliseconds"),
+                    (datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]), hours=window)).isoformat(timespec="milliseconds"))
+            t0t1 = get_J2000_epoch_offset(tint)
 
-    config = [configure(prop_initial_TLE=tle[1:3], prop_start=t0t1[0], prop_step=180.0, prop_end=t0t1[1], prop_inertial_frame=Frame.EME2000,
-                        gravity_degree=-1, gravity_order=-1, ocean_tides_degree=-1, ocean_tides_order=-1, third_body_sun=False, third_body_moon=False,
-                        solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False, sim_measurements=False)]
-    headers = {"OBJECT_ID": str(int(tle[1][2:7])), "OBJECT_NAME": tle[0][2:].strip(), "START_TIME": tint[0], "STOP_TIME": tint[1]}
+        config = [configure(prop_initial_TLE=tle[1:3], prop_start=t0t1[0], prop_step=180.0, prop_end=t0t1[1], prop_inertial_frame=Frame.EME2000,
+                            gravity_degree=-1, gravity_order=-1, ocean_tides_degree=-1, ocean_tides_order=-1, third_body_sun=False, third_body_moon=False,
+                            solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False, sim_measurements=False)]
+        headers = {"OBJECT_ID": str(int(tle[1][2:7])), "OBJECT_NAME": tle[0][2:].strip(), "START_TIME": tint[0], "STOP_TIME": tint[1]}
 
-    for p in propagate_orbits(config)[0].array:
-        times.append(p.time)
-        states.append(list(p.true_state))
+        for p in propagate_orbits(config)[0].array:
+            times.append(p.time)
+            states.append(list(p.true_state))
+    except Exception as exc:
+        print(f"{tle[1:3]}: {exc}")
+        return(None)
+
     return(headers["OBJECT_ID"], headers, times, states)
 
 def interpolate(params):
