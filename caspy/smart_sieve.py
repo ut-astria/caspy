@@ -165,6 +165,7 @@ def screen_pair(params):
                         summary.append([object1["oemFile"], object2["oemFile"], cdm_file, time_ca, miss_dist, object1["RELATIVE_SPEED"]])
             i += 1
     except Exception as exc:
+        print(f"""{object1["oemFile"]}, {object2["oemFile"]}: {exc}""")
         return(None)
     return(summary)
 

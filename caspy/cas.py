@@ -180,7 +180,9 @@ def import_oem(params):
             if (toks[0] <= end_time):
                 times.append(toks[0])
                 states.append([float(t)*1000.0 for t in toks[1:]])
-    return(oem_file, headers, list(get_J2000_epoch_offset(times)), states, cov_times, cov)
+
+    times = get_J2000_epoch_offset(times)
+    return(oem_file, headers, [times] if (isinstance(times, float)) else list(times), states, cov_times, cov)
 
 def propagate_tle(params):
     t0t1, times, states = [None]*2, [], []
