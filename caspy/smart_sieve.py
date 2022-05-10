@@ -34,134 +34,139 @@ def init_process():
     _cdm_template = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm"))
 
 def screen_pair(params):
-    object1, object2, times, outputPath, interpOrder, interpTimeScale, criticalDistance, pos_sigma, vel_sigma, HBR = params
-    states1, states2 = object1["states"], object2["states"]
+    try:
+        object1, object2, times, outputPath, interpOrder, interpTimeScale, criticalDistance, pos_sigma, vel_sigma, HBR = params
+        states1, states2 = object1["states"], object2["states"]
 
-    # Middle index of interpolation process
-    indexOffset = int((interpOrder - 1)/2)
+        # Middle index of interpolation process
+        indexOffset = int((interpOrder - 1)/2)
 
-    # Apogee Perigee Filter
-    underThreshold, rp1, rp2 = apogee_filter(states1[0], states2[0], times[1] - times[0], criticalDistance)
-    if (not underThreshold):
+        # Apogee Perigee Filter
+        underThreshold, rp1, rp2 = apogee_filter(states1[0], states2[0], times[1] - times[0], criticalDistance)
+        if (not underThreshold):
+            return(None)
+
+        timeCloseApproach, eventOccurrence = 0, False
+        i, eventMinDistance = indexOffset, criticalDistance
+        interpTimeMin, interpS1Min, interpS2Min, summary = [], [], [], []
+
+        # Iterate through each time step
+        while (i < len(times) - indexOffset):
+            # Run smart Sieve
+            if (i >= min(len(states1), len(states2))):
+                return(summary)
+            passSieve, numIndexSkip = sift(states1[i], states2[i], rp1, rp2, times[1] - times[0], criticalDistance)
+
+            # If pass continue. If fail, skip index
+            if (not passSieve):
+                i += numIndexSkip
+                continue
+
+            interpTime = [times[i + j] for j in range(-indexOffset, indexOffset + 1)]
+            interpS1 = [states1[i + j] for j in range(-indexOffset, indexOffset + 1)]
+            interpS2 = [states2[i + j] for j in range(-indexOffset, indexOffset + 1)]
+
+            # If smart sieve passed, run binary search
+            TCAResults = find_TCA(interpTime, interpS1, interpS2, times[1] - times[0], interpTimeScale,
+                                  interpOrder, criticalDistance, rp1, rp2)
+
+            # Event found
+            if (TCAResults[1] < criticalDistance):
+                #If minimum distance of event, save data
+                if (TCAResults[1] < eventMinDistance):
+                    eventOccurrence = True
+                    interpTimeMin = interpTime
+                    interpS1Min = interpS1
+                    interpS2Min = interpS2
+                    eventMinDistance = TCAResults[1]
+                    timeCloseApproach= TCAResults[0]
+            # Event not found
+            else:
+                # If event has just ended
+                if (eventOccurrence):
+                    # Select closest state to propagate from
+                    if (timeCloseApproach > interpTimeMin[indexOffset]):
+                        state1PreCloseApproach = interpS1Min[indexOffset]
+                        state2PreCloseApproach = interpS2Min[indexOffset]
+                        timePreCloseApproach = interpTimeMin[indexOffset]
+                    else:
+                        state1PreCloseApproach = interpS1Min[indexOffset - 1]
+                        state2PreCloseApproach = interpS2Min[indexOffset - 1]
+                        timePreCloseApproach = interpTimeMin[indexOffset - 1]
+
+                    time_ca = get_UTC_string(timeCloseApproach)
+                    screen_start, screen_stop = get_UTC_string((times[0], times[-1]))
+
+                    # Propagate states and covariances to TCA
+                    def_cov = [pos_sigma**2]*3 + [vel_sigma**2]*3
+                    cfg = [configure(prop_start=timePreCloseApproach, prop_initial_state=state1PreCloseApproach, prop_inertial_frame=Frame.EME2000,
+                                     estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=get_covariance(object1, timePreCloseApproach, def_cov),
+                                     drag_coefficient=Parameter(value=2.0, min=1.0, max=3.0, estimation=EstimationType.UNDEFINED),
+                                     rp_coeff_reflection=Parameter(value=1.5, min=1.0, max=2.0, estimation=EstimationType.UNDEFINED),
+                                     estm_process_noise=(1E-8,)*6, estm_DMC_corr_time=0, estm_DMC_sigma_pert=0),
+                           configure(prop_start=timePreCloseApproach, prop_initial_state=state2PreCloseApproach, prop_inertial_frame=Frame.EME2000,
+                                     estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=get_covariance(object2, timePreCloseApproach, def_cov),
+                                     drag_coefficient=Parameter(value=2.0, min=1.0, max=3.0, estimation=EstimationType.UNDEFINED),
+                                     rp_coeff_reflection=Parameter(value=1.5, min=1.0, max=2.0, estimation=EstimationType.UNDEFINED),
+                                     estm_process_noise=(1E-8,)*6, estm_DMC_corr_time=0, estm_DMC_sigma_pert=0)]
+                    cfg[0].measurements[MeasurementType.POSITION].error[:] = [100.0]*3
+                    cfg[1].measurements[MeasurementType.POSITION].error[:] = [100.0]*3
+
+                    fit = determine_orbit(cfg, [[build_measurement(timeCloseApproach, "", [])]]*2)
+                    state_ca1, state_ca2 = fit[0][-1].estimated_state, fit[1][-1].estimated_state
+                    prop_cov1 = np.array(ltr_to_matrix(fit[0][-1].propagated_covariance))
+                    prop_cov2 = np.array(ltr_to_matrix(fit[1][-1].propagated_covariance))
+                    pos_obj1, vel_obj1 = state_ca1[:3], state_ca1[3:]
+                    pos_obj2, vel_obj2 = state_ca2[:3], state_ca2[3:]
+                    miss_dist = la.norm(np.subtract(pos_obj1, pos_obj2))
+
+                    r_hat = pos_obj1/la.norm(pos_obj1)
+                    cross_pro = np.cross(pos_obj1, vel_obj1)
+                    n_hat = cross_pro/la.norm(cross_pro)
+                    t_hat = np.cross(n_hat, r_hat)
+                    rotation = np.vstack((r_hat, t_hat, n_hat))
+
+                    R = np.zeros((6, 6))
+                    R[:3,:3] = rotation
+                    R[3:,3:] = rotation
+                    cov1_rtn = R.dot(prop_cov1).dot(R.transpose())
+                    cov2_rtn = R.dot(prop_cov2).dot(R.transpose())
+                    relative_pos = rotation.dot(np.subtract(pos_obj2, pos_obj1))
+                    relative_vel = rotation.dot(np.subtract(vel_obj2, vel_obj1))
+                    coll_prob = compute_Pc(state_ca1, state_ca2, prop_cov1, prop_cov2, HBR)
+
+                    object1.update({"CREATION_DATE":datetime.now(timezone.utc).isoformat(timespec="milliseconds")[:-6], "TCA": time_ca,
+                                    "MISS_DISTANCE": miss_dist, "RELATIVE_SPEED": la.norm(np.subtract(vel_obj1, vel_obj2)),
+                                    "RELATIVE_POSITION_R":relative_pos[0],"RELATIVE_POSITION_T":relative_pos[1],"RELATIVE_POSITION_N":relative_pos[2],
+                                    "RELATIVE_VELOCITY_R":relative_vel[0],"RELATIVE_VELOCITY_T":relative_vel[1],"RELATIVE_VELOCITY_N":relative_vel[2],
+                                    "START_SCREEN_PERIOD": screen_start, "STOP_SCREEN_PERIOD": screen_stop, "COLLISION_PROBABILITY": coll_prob,
+                                    "X": pos_obj1[0]/1000, "Y": pos_obj1[1]/1000, "Z": pos_obj1[2]/1000,"X_DOT":vel_obj1[0]/1000,
+                                    "Y_DOT":vel_obj1[1]/1000, "Z_DOT":vel_obj1[2]/1000,"CR_R":cov1_rtn[0][0],"CT_R":cov1_rtn[1][0],
+                                    "CT_T":cov1_rtn[1][1],"CN_R":cov1_rtn[2][0],"CN_T":cov1_rtn[2][1],"CN_N":cov1_rtn[2][2],"CRDOT_R":cov1_rtn[3][0],
+                                    "CRDOT_T":cov1_rtn[3][1],"CRDOT_N":cov1_rtn[3][2],"CRDOT_RDOT":cov1_rtn[3][3],"CTDOT_R":cov1_rtn[4][0],
+                                    "CTDOT_T":cov1_rtn[4][1],"CTDOT_N":cov1_rtn[4][2],"CTDOT_RDOT":cov1_rtn[4][3],"CTDOT_TDOT":cov1_rtn[4][4],
+                                    "CNDOT_R":cov1_rtn[5][0],"CNDOT_T":cov1_rtn[5][1],"CNDOT_N":cov1_rtn[5][2],"CNDOT_RDOT":cov1_rtn[5][3],
+                                    "CNDOT_TDOT": cov1_rtn[5][4], "CNDOT_NDOT": cov1_rtn[5][5]})
+
+                    object2.update({"X": pos_obj2[0]/1000, "Y": pos_obj2[1]/1000, "Z": pos_obj2[2]/1000,"X_DOT":vel_obj2[0]/1000,
+                                    "Y_DOT":vel_obj2[1]/1000,"Z_DOT":vel_obj2[2]/1000,"CR_R": cov2_rtn[0][0],"CT_R":cov2_rtn[1][0],
+                                    "CT_T":cov2_rtn[1][1],"CN_R":cov2_rtn[2][0],"CN_T":cov2_rtn[2][1],"CN_N":cov2_rtn[2][2],"CRDOT_R":cov2_rtn[3][0],
+                                    "CRDOT_T":cov2_rtn[3][1],"CRDOT_N":cov2_rtn[3][2],"CRDOT_RDOT":cov2_rtn[3][3],"CTDOT_R":cov2_rtn[4][0],
+                                    "CTDOT_T":cov2_rtn[4][1],"CTDOT_N":cov2_rtn[4][2],"CTDOT_RDOT":cov2_rtn[4][3],"CTDOT_TDOT":cov2_rtn[4][4],
+                                    "CNDOT_R":cov2_rtn[5][0],"CNDOT_T":cov2_rtn[5][1],"CNDOT_N":cov2_rtn[5][2],"CNDOT_RDOT":cov2_rtn[5][3],
+                                    "CNDOT_TDOT": cov2_rtn[5][4], "CNDOT_NDOT": cov2_rtn[5][5]})
+
+                    eventMinDistance, eventOccurrence = criticalDistance, False
+                    if (miss_dist < criticalDistance):
+                        cdm_file = path.join(outputPath, f"""{object1["headers"]["OBJECT_ID"]}_{object2["headers"]["OBJECT_ID"]}_"""
+                                             f"""{time_ca[:19].replace("-", "").replace(":", "")}.cdm""")
+                        with open(cdm_file, "w") as fp:
+                            fp.write(_cdm_template.render(obj1=object1, obj2=object2))
+                        summary.append([object1["oemFile"], object2["oemFile"], cdm_file, time_ca, miss_dist, object1["RELATIVE_SPEED"]])
+            i += 1
+    except Exception as exc:
+        print(f"""{object1["oemFile"]}, {object2["oemFile"]}: {exc}""")
         return(None)
-
-    timeCloseApproach, eventOccurrence = 0, False
-    i, eventMinDistance = indexOffset, criticalDistance
-    interpTimeMin, interpS1Min, interpS2Min, summary = [], [], [], []
-
-    # Iterate through each time step
-    while (i < len(times) - indexOffset):
-        # Run smart Sieve
-        if (i >= min(len(states1), len(states2))):
-            return(summary)
-        passSieve, numIndexSkip = sift(states1[i], states2[i], rp1, rp2, times[1] - times[0], criticalDistance)
-
-        # If pass continue. If fail, skip index
-        if (not passSieve):
-            i += numIndexSkip
-            continue
-
-        interpTime = [times[i + j] for j in range(-indexOffset, indexOffset + 1)]
-        interpS1 = [states1[i + j] for j in range(-indexOffset, indexOffset + 1)]
-        interpS2 = [states2[i + j] for j in range(-indexOffset, indexOffset + 1)]
-
-        # If smart sieve passed, run binary search
-        TCAResults = find_TCA(interpTime, interpS1, interpS2, times[1] - times[0], interpTimeScale, interpOrder, criticalDistance, rp1, rp2)
-
-        # Event found
-        if (TCAResults[1] < criticalDistance):
-            #If minimum distance of event, save data
-            if (TCAResults[1] < eventMinDistance):
-                eventOccurrence = True
-                interpTimeMin = interpTime
-                interpS1Min = interpS1
-                interpS2Min = interpS2
-                eventMinDistance = TCAResults[1]
-                timeCloseApproach= TCAResults[0]
-        # Event not found
-        else:
-            # If event has just ended
-            if (eventOccurrence):
-                # Select closest state to propagate from
-                if (timeCloseApproach > interpTimeMin[indexOffset]):
-                    state1PreCloseApproach = interpS1Min[indexOffset]
-                    state2PreCloseApproach = interpS2Min[indexOffset]
-                    timePreCloseApproach = interpTimeMin[indexOffset]
-                else:
-                    state1PreCloseApproach = interpS1Min[indexOffset - 1]
-                    state2PreCloseApproach = interpS2Min[indexOffset - 1]
-                    timePreCloseApproach = interpTimeMin[indexOffset - 1]
-
-                time_ca = get_UTC_string(timeCloseApproach)
-                screen_start, screen_stop = get_UTC_string((times[0], times[-1]))
-
-                # Propagate states and covariances to TCA
-                def_cov = [pos_sigma**2]*3 + [vel_sigma**2]*3
-                cfg = [configure(prop_start=timePreCloseApproach, prop_initial_state=state1PreCloseApproach, prop_inertial_frame=Frame.EME2000,
-                                 estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=get_covariance(object1, timePreCloseApproach, def_cov),
-                                 drag_coefficient=Parameter(value=2.0, min=1.0, max=3.0, estimation=EstimationType.UNDEFINED),
-                                 rp_coeff_reflection=Parameter(value=1.5, min=1.0, max=2.0, estimation=EstimationType.UNDEFINED),
-                                 estm_process_noise=(1E-8,)*6, estm_DMC_corr_time=0, estm_DMC_sigma_pert=0),
-                       configure(prop_start=timePreCloseApproach, prop_initial_state=state2PreCloseApproach, prop_inertial_frame=Frame.EME2000,
-                                 estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=get_covariance(object2, timePreCloseApproach, def_cov),
-                                 drag_coefficient=Parameter(value=2.0, min=1.0, max=3.0, estimation=EstimationType.UNDEFINED),
-                                 rp_coeff_reflection=Parameter(value=1.5, min=1.0, max=2.0, estimation=EstimationType.UNDEFINED),
-                                 estm_process_noise=(1E-8,)*6, estm_DMC_corr_time=0, estm_DMC_sigma_pert=0)]
-                cfg[0].measurements[MeasurementType.POSITION].error[:] = [100.0]*3
-                cfg[1].measurements[MeasurementType.POSITION].error[:] = [100.0]*3
-
-                fit = determine_orbit(cfg, [[build_measurement(timeCloseApproach, "", [])]]*2)
-                state_ca1, state_ca2 = fit[0][-1].estimated_state, fit[1][-1].estimated_state
-                prop_cov1 = np.array(ltr_to_matrix(fit[0][-1].propagated_covariance))
-                prop_cov2 = np.array(ltr_to_matrix(fit[1][-1].propagated_covariance))
-                pos_obj1, vel_obj1 = state_ca1[:3], state_ca1[3:]
-                pos_obj2, vel_obj2 = state_ca2[:3], state_ca2[3:]
-                miss_dist = la.norm(np.subtract(pos_obj1, pos_obj2))
-
-                r_hat = pos_obj1/la.norm(pos_obj1)
-                cross_pro = np.cross(pos_obj1, vel_obj1)
-                n_hat = cross_pro/la.norm(cross_pro)
-                t_hat = np.cross(n_hat, r_hat)
-                rotation = np.vstack((r_hat, t_hat, n_hat))
-
-                R = np.zeros((6, 6))
-                R[:3,:3] = rotation
-                R[3:,3:] = rotation
-                cov1_rtn = R.dot(prop_cov1).dot(R.transpose())
-                cov2_rtn = R.dot(prop_cov2).dot(R.transpose())
-                relative_pos = rotation.dot(np.subtract(pos_obj2, pos_obj1))
-                relative_vel = rotation.dot(np.subtract(vel_obj2, vel_obj1))
-                coll_prob = compute_Pc(state_ca1, state_ca2, prop_cov1, prop_cov2, HBR)
-
-                object1.update({"CREATION_DATE":datetime.now(timezone.utc).isoformat(timespec="milliseconds")[:-6], "TCA": time_ca,
-                                "MISS_DISTANCE": miss_dist, "RELATIVE_SPEED": la.norm(np.subtract(vel_obj1, vel_obj2)),
-                                "RELATIVE_POSITION_R":relative_pos[0],"RELATIVE_POSITION_T":relative_pos[1],"RELATIVE_POSITION_N":relative_pos[2],
-                                "RELATIVE_VELOCITY_R":relative_vel[0],"RELATIVE_VELOCITY_T":relative_vel[1],"RELATIVE_VELOCITY_N":relative_vel[2],
-                                "START_SCREEN_PERIOD": screen_start, "STOP_SCREEN_PERIOD": screen_stop, "COLLISION_PROBABILITY": coll_prob,
-                                "X": pos_obj1[0]/1000, "Y": pos_obj1[1]/1000, "Z": pos_obj1[2]/1000,
-                                "X_DOT":vel_obj1[0]/1000,"Y_DOT":vel_obj1[1]/1000,"Z_DOT":vel_obj1[2]/1000,"CR_R":cov1_rtn[0][0],"CT_R":cov1_rtn[1][0],
-                                "CT_T":cov1_rtn[1][1],"CN_R":cov1_rtn[2][0],"CN_T":cov1_rtn[2][1],"CN_N":cov1_rtn[2][2],"CRDOT_R":cov1_rtn[3][0],
-                                "CRDOT_T":cov1_rtn[3][1],"CRDOT_N":cov1_rtn[3][2],"CRDOT_RDOT":cov1_rtn[3][3],"CTDOT_R":cov1_rtn[4][0],
-                                "CTDOT_T":cov1_rtn[4][1],"CTDOT_N":cov1_rtn[4][2],"CTDOT_RDOT":cov1_rtn[4][3],"CTDOT_TDOT":cov1_rtn[4][4],
-                                "CNDOT_R":cov1_rtn[5][0],"CNDOT_T":cov1_rtn[5][1],"CNDOT_N":cov1_rtn[5][2],"CNDOT_RDOT":cov1_rtn[5][3],
-                                "CNDOT_TDOT": cov1_rtn[5][4], "CNDOT_NDOT": cov1_rtn[5][5]})
-
-                object2.update({"X": pos_obj2[0]/1000, "Y": pos_obj2[1]/1000, "Z": pos_obj2[2]/1000,
-                                "X_DOT":vel_obj2[0]/1000,"Y_DOT":vel_obj2[1]/1000,"Z_DOT":vel_obj2[2]/1000,"CR_R": cov2_rtn[0][0],"CT_R":cov2_rtn[1][0],
-                                "CT_T":cov2_rtn[1][1],"CN_R":cov2_rtn[2][0],"CN_T":cov2_rtn[2][1],"CN_N":cov2_rtn[2][2],"CRDOT_R":cov2_rtn[3][0],
-                                "CRDOT_T":cov2_rtn[3][1],"CRDOT_N":cov2_rtn[3][2],"CRDOT_RDOT":cov2_rtn[3][3],"CTDOT_R":cov2_rtn[4][0],
-                                "CTDOT_T":cov2_rtn[4][1],"CTDOT_N":cov2_rtn[4][2],"CTDOT_RDOT":cov2_rtn[4][3],"CTDOT_TDOT":cov2_rtn[4][4],
-                                "CNDOT_R":cov2_rtn[5][0],"CNDOT_T":cov2_rtn[5][1],"CNDOT_N":cov2_rtn[5][2],"CNDOT_RDOT":cov2_rtn[5][3],
-                                "CNDOT_TDOT": cov2_rtn[5][4], "CNDOT_NDOT": cov2_rtn[5][5]})
-
-                eventMinDistance, eventOccurrence = criticalDistance, False
-                if (miss_dist < criticalDistance):
-                    cdm_file = path.join(outputPath, f"""{object1["headers"]["OBJECT_ID"]}_{object2["headers"]["OBJECT_ID"]}_"""
-                                         f"""{time_ca[:19].replace("-", "").replace(":", "")}.cdm""")
-                    with open(cdm_file, "w") as fp:
-                        fp.write(_cdm_template.render(obj1=object1, obj2=object2))
-                    summary.append([object1["oemFile"], object2["oemFile"], cdm_file, time_ca, miss_dist, object1["RELATIVE_SPEED"]])
-        i += 1
     return(summary)
 
 # Function to read in object states, and run apogee/perigee filter based upon critical distance

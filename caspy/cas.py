@@ -17,62 +17,122 @@
 import argparse
 import bisect
 from datetime import datetime, timedelta
-import filecmp
 import glob
-import itertools
 import multiprocessing
 import numpy as np
-from orbdetpy import Frame
-from orbdetpy.conversion import get_J2000_epoch_offset
+from orbdetpy import configure, DragModel, Frame
+from orbdetpy.conversion import get_J2000_epoch_offset, get_UTC_string
+from orbdetpy.propagation import propagate_orbits
 from orbdetpy.utilities import interpolate_ephemeris
 import os
 import sys
+
 if (__name__ == "caspy.cas"):
     import caspy.smart_sieve as sms
 else:
     import smart_sieve as sms
 
 def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0, pos_sigma=1000.0, vel_sigma=0.1,
-            inter_order=5, inter_time=0.01, extra_keys=[], window=24.0):
-    multiprocessing.set_start_method("spawn")
-    pool = multiprocessing.Pool(os.cpu_count(), sms.init_process)
+            inter_order=5, inter_time=0.01, extra_keys=[], window=24.0, chunk_size=os.cpu_count()):
+    if (not hasattr(pri_files, "__len__")):
+        pri_files = list(pri_files)
+    if (not hasattr(sec_files, "__len__")):
+        sec_files = list(sec_files)
 
-    # Object 1 (primary) loop
-    primary = []
-    for fname, headers, pri_time, pri_state, cov_time, cov in pool.map(
-            import_oem, zip(pri_files, (extra_keys,)*len(pri_files), (window,)*len(pri_files))):
-        exp_time = np.arange(pri_time[0], pri_time[-1], 180.0).tolist()
-        pri_state = [list(ie.true_state) for ie in interpolate_ephemeris(
-            Frame.EME2000, pri_time, pri_state, inter_order, Frame.EME2000, exp_time, 0.0, 0.0)]
-        primary.append({"headers": headers, "times": exp_time, "states": pri_state, "oemFile": fname, "covTime": cov_time, "cov": cov})
+    try:
+        multiprocessing.set_start_method("spawn")
+    except Exception as _:
+        pass
+    pool = multiprocessing.Pool(chunk_size, sms.init_process)
+    done, task_cache, pri_task, sec_task, mp_input, summary = set(), [], [], [], [], []
 
-    # Process primary/secondary combinations in parallel chunks depending on CPUs
-    summary = []
-    tasks = list((p, s) for p, s in itertools.product(primary, sec_files) if (not filecmp.cmp(p["oemFile"], s, shallow=False)))
-    for task in [tasks[i:i + os.cpu_count()] for i in range(0, len(tasks), os.cpu_count())]:
-        mp_inputs, task_idx = [], -1
-        for fname, headers, sec_time, sec_state, cov_time, cov in pool.map(
-                import_oem, zip((t[-1] for t in task), (extra_keys,)*os.cpu_count(), (window,)*os.cpu_count())):
-            task_idx += 1
-            sec_data = {"headers": headers, "oemFile": fname, "covTime": cov_time, "cov": cov}
-            pri = task[task_idx][0].copy()
-            idx0, idx1 = bisect.bisect_left(pri["times"], sec_time[0]), bisect.bisect_right(pri["times"], sec_time[-1])
-            exp_time = pri["times"][idx0:idx1]
-            pri["states"] = pri["states"][idx0:idx1]
-            if (len(exp_time) < 2):
-                continue
-            sec_data["states"] = [list(ie.true_state) for ie in interpolate_ephemeris(
-                Frame.EME2000, sec_time, sec_state, inter_order, Frame.EME2000, exp_time, 0.0, 0.0)]
-            mp_inputs.append([pri, sec_data, exp_time, output_path, inter_order, inter_time, distance, pos_sigma, vel_sigma, radius])
+    for pri_idx, pri_file in enumerate(pri_files):
+        done.add(pri_file)
+        for sec_idx, sec_file in enumerate(sec_files):
+            if (sec_file not in done):
+                pri_task.append(pri_file)
+                sec_task.append(sec_file)
 
-        if (len(mp_inputs) > 0):
-            for result in pool.imap_unordered(sms.screen_pair, mp_inputs):
-                if (result):
-                    summary.extend(result)
+            if (len(pri_task) == chunk_size or (pri_task and pri_idx == len(pri_files) - 1 and sec_idx == len(sec_files) - 1)):
+                secondary = pool.map(import_oem, zip(sec_task, (extra_keys,)*len(sec_task), (window,)*len(sec_task)))
+                if (pri_task != task_cache):
+                    primary = pool.map(import_oem, zip(pri_task, (extra_keys,)*len(pri_task), (window,)*len(pri_task)))
+                    pri_time = [np.arange(p[2][0], p[2][-1], 180.0).tolist() for p in primary]
+                    pri_state = pool.map(interpolate, ((Frame.EME2000, p[2], p[3], inter_order, Frame.EME2000, e, 0.0, 0.0)
+                                                       for e, p in zip(pri_time, primary)))
+
+                for pri, sec, ptm, pst in zip(primary, secondary, pri_time, pri_state):
+                    idx0, idx1 = bisect.bisect_left(ptm, sec[2][0]), bisect.bisect_right(ptm, sec[2][-1])
+                    use_time, use_state = ptm[idx0:idx1], pst[idx0:idx1]
+                    if (len(use_time) < 2):
+                        continue
+                    sec_state = interpolate((Frame.EME2000, sec[2], sec[3], inter_order, Frame.EME2000, use_time, 0.0, 0.0))
+
+                    pri_map = {"oemFile": pri[0], "headers": pri[1], "states": use_state, "covTime": pri[4], "cov": pri[5]}
+                    sec_map = {"oemFile": sec[0], "headers": sec[1], "states": sec_state, "covTime": sec[4], "cov": sec[5]}
+                    mp_input.append([pri_map, sec_map, use_time, output_path, inter_order, inter_time, distance, pos_sigma, vel_sigma, radius])
+
+                if (mp_input):
+                    for result in pool.imap_unordered(sms.screen_pair, mp_input):
+                        if (result):
+                            summary.extend(result)
+
+                task_cache = pri_task.copy()
+                pri_task.clear()
+                sec_task.clear()
+                mp_input.clear()
 
     pool.close()
     summary.sort(key=lambda s: s[4])
-    with open(os.path.join(output_path, f"""ca-{datetime.now().strftime("%Y%m%dT%H%M%S")}.txt"""), "w") as fp:
+    with open(os.path.join(output_path, f"""ca_{datetime.now().strftime("%Y%m%dT%H%M%S")}.txt"""), "w") as fp:
+        for entry in summary:
+            fp.write(",".join(str(s) for s in entry) + "\n")
+
+def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.0, pos_sigma=1000.0, vel_sigma=0.1,
+                inter_order=5, inter_time=0.01, window=24.0, chunk_size=os.cpu_count()):
+    if (not hasattr(pri_tles, "__len__")):
+        pri_tles = list(pri_tles)
+    if (not hasattr(sec_tles, "__len__")):
+        sec_tles = list(sec_tles)
+
+    try:
+        multiprocessing.set_start_method("spawn")
+    except Exception as _:
+        pass
+    pool = multiprocessing.Pool(chunk_size, sms.init_process)
+    done, task_cache, pri_task, sec_task, mp_input, summary = set(), [], [], [], [], []
+
+    for pri_idx, pri_tle in enumerate(pri_tles):
+        done.add(pri_tle[1])
+        for sec_idx, sec_tle in enumerate(sec_tles):
+            if (sec_tle[1] not in done):
+                pri_task.append(pri_tle)
+                sec_task.append(sec_tle)
+
+            if (len(pri_task) == chunk_size or (pri_task and pri_idx == len(pri_tles) - 1 and sec_idx == len(sec_tles) - 1)):
+                if (pri_task != task_cache):
+                    primary = pool.map(propagate_tle, zip(pri_task, (window,)*len(pri_task), (None,)*len(pri_task), (None,)*len(pri_task)))
+                secondary = pool.map(propagate_tle,
+                                     zip(sec_task, (window,)*len(pri_task), (p[2][0] for p in primary), (p[2][-1] for p in primary)))
+
+                for pri, sec in zip(primary, secondary):
+                    pri_map = {"oemFile": pri[0], "headers": pri[1], "states": pri[3], "covTime": [], "cov": []}
+                    sec_map = {"oemFile": sec[0], "headers": sec[1], "states": sec[3], "covTime": [], "cov": []}
+                    mp_input.append([pri_map, sec_map, pri[2], output_path, inter_order, inter_time, distance, pos_sigma, vel_sigma, radius])
+
+                if (mp_input):
+                    for result in pool.imap_unordered(sms.screen_pair, mp_input):
+                        if (result):
+                            summary.extend(result)
+
+                task_cache = pri_task.copy()
+                pri_task.clear()
+                sec_task.clear()
+                mp_input.clear()
+
+    pool.close()
+    summary.sort(key=lambda s: s[4])
+    with open(os.path.join(output_path, f"""tle_ca_{datetime.now().strftime("%Y%m%dT%H%M%S")}.txt"""), "w") as fp:
         for entry in summary:
             fp.write(",".join(str(s) for s in entry) + "\n")
 
@@ -120,7 +180,32 @@ def import_oem(params):
             if (toks[0] <= end_time):
                 times.append(toks[0])
                 states.append([float(t)*1000.0 for t in toks[1:]])
-    return(oem_file, headers, list(get_J2000_epoch_offset(times)), states, cov_times, cov)
+
+    times = get_J2000_epoch_offset(times)
+    return(oem_file, headers, [times] if (isinstance(times, float)) else list(times), states, cov_times, cov)
+
+def propagate_tle(params):
+    t0t1, times, states = [None]*2, [], []
+    tle, window, t0t1[0], t0t1[1] = params
+    if (t0t1[0] and t0t1[1]):
+        tint = get_UTC_string(t0t1)
+    else:
+        tint = ((datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]))).isoformat(timespec="milliseconds"),
+                (datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]), hours=window)).isoformat(timespec="milliseconds"))
+        t0t1 = get_J2000_epoch_offset(tint)
+
+    config = [configure(prop_initial_TLE=tle[1:3], prop_start=t0t1[0], prop_step=180.0, prop_end=t0t1[1], prop_inertial_frame=Frame.EME2000,
+                        gravity_degree=-1, gravity_order=-1, ocean_tides_degree=-1, ocean_tides_order=-1, third_body_sun=False, third_body_moon=False,
+                        solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False, sim_measurements=False)]
+    headers = {"OBJECT_ID": str(int(tle[1][2:7])), "OBJECT_NAME": tle[0][2:].strip(), "START_TIME": tint[0], "STOP_TIME": tint[1]}
+
+    for p in propagate_orbits(config)[0].array:
+        times.append(p.time)
+        states.append(list(p.true_state))
+    return(headers["OBJECT_ID"], headers, times, states)
+
+def interpolate(params):
+    return([list(ie.true_state) for ie in interpolate_ephemeris(*params)])
 
 if (__name__ == "__main__"):
     parser = argparse.ArgumentParser(description="Conjunction Analysis", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
