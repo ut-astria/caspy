@@ -154,7 +154,8 @@ def import_oem(params):
         if (line.startswith("COVARIANCE_START")):
             cov_start = True
         if (line.startswith("COVARIANCE_STOP")):
-            cov_times = list(get_J2000_epoch_offset(cov_times))
+            cov_times = get_J2000_epoch_offset(cov_times)
+            cov_times = [cov_times] if (isinstance(cov_times, float)) else list(cov_times)
             break
         if (cov_start):
             if (line.startswith("EPOCH")):
