@@ -12,7 +12,7 @@ RUN cd && \
     cd ${HOME}/caspy && \
     pip install -r requirements.txt
 
-entrypoint cd && \
+ENTRYPOINT cd && \
     . env_orbdetpy/bin/activate && \
     cd ${HOME}/caspy/caspy && \
     python cas.py
