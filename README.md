@@ -20,7 +20,19 @@ Usage
    in <https://www.space-track.org/documents/Spaceflight_Safety_Handbook_for_Operators.pdf>.
    Use `utils/meme_to_oem.py` to convert these files to OEM format.
 
+
+Docker 
+______
+
+You will first need to clone [orbdetpy](https://github.com/ut-astria/orbdetpy) and build its docker image as posted [here](https://github.com/ut-astria/orbdetpy#docker). 
+
+```bash
+docker build -t caspy:core .
+docker run --rm caspy:core -h
+```
+=======
 Examples
 --------
 
 1. `examples/tle_cas.py` demonstrates TLE screening functionality.
+
