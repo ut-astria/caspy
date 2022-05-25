@@ -242,8 +242,8 @@ def interpolate(params):
 
 if (__name__ == "__main__"):
     parser = argparse.ArgumentParser(description="Conjunction Analysis", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("primary-path", help="Primary object OEM file path")
-    parser.add_argument("secondary-path", help="Secondary object OEM file path")
+    parser.add_argument("primary-path", help="Primary object OEM file or directory path")
+    parser.add_argument("secondary-path", help="Secondary object OEM file or directory path")
     parser.add_argument("-d", "--distance", help="Critical distance [m]", type=float, default=5000.0)
     parser.add_argument("-w", "--window", help="Screening time window [hr]", type=float, default=24.0)
     parser.add_argument("-o", "--output-path", help="CDM output path", default=".")
@@ -258,7 +258,10 @@ if (__name__ == "__main__"):
         exit(1)
 
     arg = parser.parse_args()
-    pri = glob.glob(os.path.join(getattr(arg, "primary-path"), "*.oem"))
-    sec = glob.glob(os.path.join(getattr(arg, "secondary-path"), "*.oem"))
+    # Allow for a single path to an oem
+    primary_path = getattr(arg, "primary-path")
+    secondary_path = getattr(arg, "secondary-path")
+    pri = glob.glob(os.path.join(primary_path, "*.oem")) if ".oem" not in primary_path else [primary_path]
+    sec = glob.glob(os.path.join(secondary_path, "*.oem")) if ".oem" not in secondary_path else [secondary_path]
     run_cas(pri, sec, arg.output_path, arg.distance, arg.radius, arg.pos_sigma, arg.vel_sigma,
             arg.inter_order, arg.inter_time, arg.extra_keys.split(","), arg.window)
