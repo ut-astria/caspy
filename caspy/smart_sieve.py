@@ -67,19 +67,17 @@ def screen_pair(params):
             interpS2 = [states2[i + j] for j in range(-indexOffset, indexOffset + 1)]
 
             # If smart sieve passed, run binary search
-            TCAResults = find_TCA(interpTime, interpS1, interpS2, times[1] - times[0], interpTimeScale,
-                                  interpOrder, criticalDistance, rp1, rp2)
+            tca_result = find_TCA(interpTime, interpS1, interpS2, times[1] - times[0], interpTimeScale, interpOrder, criticalDistance, rp1, rp2)
 
             # Event found
-            if (TCAResults[1] < criticalDistance):
-                #If minimum distance of event, save data
-                if (TCAResults[1] < eventMinDistance):
+            if (tca_result[1] < criticalDistance):
+                # Save data if minimum distance
+                if (tca_result[1] < eventMinDistance):
                     eventOccurrence = True
                     interpTimeMin = interpTime
                     interpS1Min = interpS1
                     interpS2Min = interpS2
-                    eventMinDistance = TCAResults[1]
-                    timeCloseApproach= TCAResults[0]
+                    timeCloseApproach, eventMinDistance = tca_result
             # Event not found
             else:
                 # If event has just ended
@@ -100,11 +98,13 @@ def screen_pair(params):
                     # Propagate states and covariances to TCA
                     def_cov = [pos_sigma**2]*3 + [vel_sigma**2]*3
                     cfg = [configure(prop_start=timePreCloseApproach, prop_initial_state=state1PreCloseApproach, prop_inertial_frame=Frame.EME2000,
+                                     ocean_tides_degree=-1, ocean_tides_order=-1, solid_tides_sun=False, solid_tides_moon=False,
                                      estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=get_covariance(object1, timePreCloseApproach, def_cov),
                                      drag_coefficient=Parameter(value=2.0, min=1.0, max=3.0, estimation=EstimationType.UNDEFINED),
                                      rp_coeff_reflection=Parameter(value=1.5, min=1.0, max=2.0, estimation=EstimationType.UNDEFINED),
                                      estm_process_noise=(1E-8,)*6, estm_DMC_corr_time=0, estm_DMC_sigma_pert=0),
                            configure(prop_start=timePreCloseApproach, prop_initial_state=state2PreCloseApproach, prop_inertial_frame=Frame.EME2000,
+                                     ocean_tides_degree=-1, ocean_tides_order=-1, solid_tides_sun=False, solid_tides_moon=False,
                                      estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=get_covariance(object2, timePreCloseApproach, def_cov),
                                      drag_coefficient=Parameter(value=2.0, min=1.0, max=3.0, estimation=EstimationType.UNDEFINED),
                                      rp_coeff_reflection=Parameter(value=1.5, min=1.0, max=2.0, estimation=EstimationType.UNDEFINED),

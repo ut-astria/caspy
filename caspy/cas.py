@@ -219,8 +219,8 @@ def propagate_tle(params):
         if (t0t1[0] and t0t1[1]):
             tint = get_UTC_string(t0t1)
         else:
-            tint = ((datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]))).isoformat(timespec="milliseconds"),
-                    (datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]), hours=window)).isoformat(timespec="milliseconds"))
+            tint = ((datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]))).isoformat(),
+                    (datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]), hours=window)).isoformat())
             t0t1 = get_J2000_epoch_offset(tint)
 
         config = [configure(prop_initial_TLE=tle[1:3], prop_start=t0t1[0], prop_step=180.0, prop_end=t0t1[1], prop_inertial_frame=Frame.EME2000,
