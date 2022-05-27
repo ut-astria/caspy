@@ -240,10 +240,15 @@ def propagate_tle(params):
 def interpolate(params):
     return([list(ie.true_state) for ie in interpolate_ephemeris(*params)])
 
+def dir_or_file(param):
+    if (os.path.isdir(param) or os.path.isfile(param)):
+        return(param)
+    raise(argparse.ArgumentTypeError(f"{param} is not a valid directory or file"))
+
 if (__name__ == "__main__"):
     parser = argparse.ArgumentParser(description="Conjunction Analysis", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("primary-path", help="Primary object OEM file or directory path")
-    parser.add_argument("secondary-path", help="Secondary object OEM file or directory path")
+    parser.add_argument("primary-path", help="Primary object OEM file or directory path", type=dir_or_file)
+    parser.add_argument("secondary-path", help="Secondary object OEM file or directory path", type=dir_or_file)
     parser.add_argument("-d", "--distance", help="Critical distance [m]", type=float, default=5000.0)
     parser.add_argument("-w", "--window", help="Screening time window [hr]", type=float, default=24.0)
     parser.add_argument("-o", "--output-path", help="CDM output path", default=".")
@@ -258,10 +263,8 @@ if (__name__ == "__main__"):
         exit(1)
 
     arg = parser.parse_args()
-    # Allow for a single path to an oem
-    primary_path = getattr(arg, "primary-path")
-    secondary_path = getattr(arg, "secondary-path")
-    pri = glob.glob(os.path.join(primary_path, "*.oem")) if ".oem" not in primary_path else [primary_path]
-    sec = glob.glob(os.path.join(secondary_path, "*.oem")) if ".oem" not in secondary_path else [secondary_path]
-    run_cas(pri, sec, arg.output_path, arg.distance, arg.radius, arg.pos_sigma, arg.vel_sigma,
+    pri_path, sec_path = getattr(arg, "primary-path"), getattr(arg, "secondary-path")
+    pri_files = glob.glob(os.path.join(pri_path, "*.oem")) if (os.path.isdir(pri_path)) else [pri_path]
+    sec_files = glob.glob(os.path.join(sec_path, "*.oem")) if (os.path.isdir(sec_path)) else [sec_path]
+    run_cas(pri_files, sec_files, arg.output_path, arg.distance, arg.radius, arg.pos_sigma, arg.vel_sigma,
             arg.inter_order, arg.inter_time, arg.extra_keys.split(","), arg.window)
