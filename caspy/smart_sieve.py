@@ -76,7 +76,7 @@ def screen_pair(params):
                 time_ca, event_min_dist = tca_result
 
             # If event has just ended
-            if (event_found and (tca_result[1] >= critical_dist or index == max_index - 1)):
+            if (event_found and (tca_result[1] >= event_min_dist or index == max_index - 1)):
                 # Select closest state to propagate from
                 if (time_ca > interpTimeMin[indexOffset]):
                     state1_pre_ca = interpS1Min[indexOffset]
@@ -151,6 +151,7 @@ def screen_pair(params):
                                 "CNDOT_R":cov2_rtn[5][0],"CNDOT_T":cov2_rtn[5][1],"CNDOT_N":cov2_rtn[5][2],"CNDOT_RDOT":cov2_rtn[5][3],
                                 "CNDOT_TDOT": cov2_rtn[5][4], "CNDOT_NDOT": cov2_rtn[5][5]})
 
+                index += 2*indexOffset
                 event_min_dist, event_found = critical_dist, False
                 if (miss_dist < critical_dist):
                     cdm_file = path.join(outputPath, f"""{object1["headers"]["OBJECT_ID"]}_{object2["headers"]["OBJECT_ID"]}_"""
@@ -158,8 +159,8 @@ def screen_pair(params):
                     with open(cdm_file, "w") as fp:
                         fp.write(_cdm_template.render(obj1=object1, obj2=object2))
                     summary.append([object1["oemFile"], object2["oemFile"], cdm_file, ca_utc, miss_dist, object1["RELATIVE_SPEED"]])
-
-            index += 1
+            else:
+                index += 1
     except Exception as exc:
         print(f"""{object1["oemFile"]}, {object2["oemFile"]}: {exc}""")
         return(None)

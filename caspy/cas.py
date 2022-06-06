@@ -155,6 +155,37 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
         for entry in summary:
             fp.write(",".join(str(s) for s in entry) + "\n")
 
+def basic_screen(pri, sec, start_utc, stop_utc, step):
+    time, rel_pos, rel_speed = [], [], []
+    t0, t1 = get_J2000_epoch_offset((start_utc, stop_utc))
+    norm = lambda x, y: np.sqrt((x[0] - y[0])**2 + (x[1] - y[1])**2 + (x[2] - y[2])**2)
+
+    if (isinstance(pri, str) and os.path.isfile(pri) and isinstance(sec, str) and os.path.isfile(sec)):
+        _, _, toem, soem, _, _ = import_oem((pri, [], 24*366))
+        int1 = interpolate_ephemeris(Frame.EME2000, toem, soem, 5, Frame.EME2000, t0, t1, step)
+
+        _, _, toem, soem, _, _ = import_oem((sec, [], 24*366))
+        int2 = interpolate_ephemeris(Frame.EME2000, toem, soem, 5, Frame.EME2000, t0, t1, step)
+        for p1, p2 in zip(int1, int2):
+            time.append(p1.time)
+            rel_pos.append(norm(p1.true_state[:3], p2.true_state[:3]))
+            rel_speed.append(norm(p1.true_state[3:6], p2.true_state[3:6]))
+    else:
+        config = [configure(prop_initial_TLE=pri[1:], prop_start=t0, prop_step=step, prop_end=t1, prop_inertial_frame=Frame.EME2000,
+                            gravity_degree=-1, gravity_order=-1, ocean_tides_degree=-1, ocean_tides_order=-1, third_body_sun=False,
+                            third_body_moon=False, solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False),
+                  configure(prop_initial_TLE=sec[1:], prop_start=t0, prop_step=step, prop_end=t1, prop_inertial_frame=Frame.EME2000,
+                            gravity_degree=-1, gravity_order=-1, ocean_tides_degree=-1, ocean_tides_order=-1, third_body_sun=False,
+                            third_body_moon=False, solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False)]
+
+        prop = propagate_orbits(config)
+        for p1, p2 in zip(prop[0].array, prop[1].array):
+            time.append(p1.time)
+            rel_pos.append(norm(p1.true_state[:3], p2.true_state[:3]))
+            rel_speed.append(norm(p1.true_state[3:6], p2.true_state[3:6]))
+
+    return(get_UTC_string(time), rel_pos, rel_speed)
+
 def import_oem(params):
     try:
         oem_file, extra_keys, window = params
@@ -223,9 +254,9 @@ def propagate_tle(params):
                     (datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]), hours=window)).isoformat())
             t0t1 = get_J2000_epoch_offset(tint)
 
-        config = [configure(prop_initial_TLE=tle[1:3], prop_start=t0t1[0], prop_step=180.0, prop_end=t0t1[1], prop_inertial_frame=Frame.EME2000,
+        config = [configure(prop_initial_TLE=tle[1:], prop_start=t0t1[0], prop_step=180.0, prop_end=t0t1[1], prop_inertial_frame=Frame.EME2000,
                             gravity_degree=-1, gravity_order=-1, ocean_tides_degree=-1, ocean_tides_order=-1, third_body_sun=False, third_body_moon=False,
-                            solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False, sim_measurements=False)]
+                            solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False)]
         headers = {"OBJECT_ID": str(int(tle[1][2:7])), "OBJECT_NAME": tle[0][2:].strip(), "START_TIME": tint[0], "STOP_TIME": tint[1]}
 
         for p in propagate_orbits(config)[0].array:
