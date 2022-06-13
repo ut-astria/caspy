@@ -158,11 +158,12 @@ def screen_pair(params):
                                          f"""{ca_utc[:19].replace("-", "").replace(":", "")}.cdm""")
                     with open(cdm_file, "w") as fp:
                         fp.write(_cdm_template.render(obj1=object1, obj2=object2))
-                    summary.append([object1["oemFile"], object2["oemFile"], cdm_file, ca_utc, miss_dist, object1["RELATIVE_SPEED"]])
+                    summary.append([object1["headers"]["EPHEMERIS_NAME"], object2["headers"]["EPHEMERIS_NAME"], cdm_file, ca_utc,
+                                    miss_dist, object1["RELATIVE_SPEED"]])
             else:
                 index += 1
     except Exception as exc:
-        print(f"""{object1["oemFile"]}, {object2["oemFile"]}: {exc}""")
+        print(f"""{object1["headers"]["EPHEMERIS_NAME"]}, {object2["headers"]["EPHEMERIS_NAME"]}: {exc}""")
         return(None)
     return(summary)
 

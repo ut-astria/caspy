@@ -67,20 +67,20 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
                         sec_task.clear()
                         continue
 
-                    pri_time = [np.arange(p[2][0], p[2][-1], 180.0).tolist() for p in primary]
-                    pri_state = pool.map(interpolate, ((Frame.EME2000, p[2], p[3], inter_order, Frame.EME2000, e, 0.0, 0.0)
+                    pri_time = [np.arange(p[1][0], p[1][-1], 180.0).tolist() for p in primary]
+                    pri_state = pool.map(interpolate, ((Frame.EME2000, p[1], p[2], inter_order, Frame.EME2000, e, 0.0, 0.0)
                                                        for e, p in zip(pri_time, primary)))
                     task_cache = pri_task.copy()
 
                 for pri, sec, ptm, pst in zip(primary, secondary, pri_time, pri_state):
-                    idx0, idx1 = bisect.bisect_left(ptm, sec[2][0]), bisect.bisect_right(ptm, sec[2][-1])
+                    idx0, idx1 = bisect.bisect_left(ptm, sec[1][0]), bisect.bisect_right(ptm, sec[1][-1])
                     use_time, use_state = ptm[idx0:idx1], pst[idx0:idx1]
                     if (len(use_time) < 2):
                         continue
-                    sec_state = interpolate((Frame.EME2000, sec[2], sec[3], inter_order, Frame.EME2000, use_time, 0.0, 0.0))
+                    sec_state = interpolate((Frame.EME2000, sec[1], sec[2], inter_order, Frame.EME2000, use_time, 0.0, 0.0))
 
-                    pri_map = {"oemFile": pri[0], "headers": pri[1], "states": use_state, "covTime": pri[4], "cov": pri[5]}
-                    sec_map = {"oemFile": sec[0], "headers": sec[1], "states": sec_state, "covTime": sec[4], "cov": sec[5]}
+                    pri_map = {"headers": pri[0], "states": use_state, "covTime": pri[3], "cov": pri[4]}
+                    sec_map = {"headers": sec[0], "states": sec_state, "covTime": sec[3], "cov": sec[4]}
                     mp_input.append([pri_map, sec_map, use_time, output_path, inter_order, inter_time, distance, pos_sigma, vel_sigma, radius])
 
                 if (mp_input):
@@ -129,16 +129,16 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
                     task_cache = pri_task.copy()
 
                 secondary = pool.map(propagate_tle,
-                                     zip(sec_task, (window,)*len(pri_task), (p[2][0] for p in primary), (p[2][-1] for p in primary)))
+                                     zip(sec_task, (window,)*len(pri_task), (p[1][0] for p in primary), (p[1][-1] for p in primary)))
                 if (any(not s for s in secondary)):
                     pri_task.clear()
                     sec_task.clear()
                     continue
 
                 for pri, sec in zip(primary, secondary):
-                    pri_map = {"oemFile": pri[0], "headers": pri[1], "states": pri[3], "covTime": [], "cov": []}
-                    sec_map = {"oemFile": sec[0], "headers": sec[1], "states": sec[3], "covTime": [], "cov": []}
-                    mp_input.append([pri_map, sec_map, pri[2], output_path, inter_order, inter_time, distance, pos_sigma, vel_sigma, radius])
+                    pri_map = {"headers": pri[0], "states": pri[2], "covTime": [], "cov": []}
+                    sec_map = {"headers": sec[0], "states": sec[2], "covTime": [], "cov": []}
+                    mp_input.append([pri_map, sec_map, pri[1], output_path, inter_order, inter_time, distance, pos_sigma, vel_sigma, radius])
 
                 if (mp_input):
                     for result in pool.imap_unordered(sms.screen_pair, mp_input):
@@ -161,10 +161,10 @@ def basic_screen(pri, sec, start_utc, stop_utc, step):
     norm = lambda x, y: np.sqrt((x[0] - y[0])**2 + (x[1] - y[1])**2 + (x[2] - y[2])**2)
 
     if (isinstance(pri, str) and os.path.isfile(pri) and isinstance(sec, str) and os.path.isfile(sec)):
-        _, _, toem, soem, _, _ = import_oem((pri, [], 24*366))
+        _, toem, soem, _, _ = import_oem((pri, [], 24*366))
         int1 = interpolate_ephemeris(Frame.EME2000, toem, soem, 5, Frame.EME2000, t0, t1, step)
 
-        _, _, toem, soem, _, _ = import_oem((sec, [], 24*366))
+        _, toem, soem, _, _ = import_oem((sec, [], 24*366))
         int2 = interpolate_ephemeris(Frame.EME2000, toem, soem, 5, Frame.EME2000, t0, t1, step)
         for p1, p2 in zip(int1, int2):
             time.append(p1.time)
@@ -189,10 +189,11 @@ def basic_screen(pri, sec, start_utc, stop_utc, step):
 def import_oem(params):
     try:
         oem_file, extra_keys, window = params
+        headers = {"EPHEMERIS_NAME": os.path.basename(oem_file)}
+        times, states, cov_start, cov_times, cov, end_time = [], [], False, [], [], None
         with open(oem_file, "r") as fp:
             lines = [l.strip() for l in fp.readlines() if (l.strip())]
 
-        headers, times, states, cov_start, cov_times, cov, end_time = {}, [], [], False, [], [], None
         for idx, line in enumerate(lines):
             # Import extra key/value pairs from comment lines
             if (line.startswith("COMMENT")):
@@ -241,7 +242,7 @@ def import_oem(params):
         print(f"{oem_file}: {exc}")
         return(None)
 
-    return(oem_file, headers, [times] if (isinstance(times, float)) else list(times), states, cov_times, cov)
+    return(headers, [times] if (isinstance(times, float)) else list(times), states, cov_times, cov)
 
 def propagate_tle(params):
     try:
@@ -255,18 +256,19 @@ def propagate_tle(params):
             t0t1 = get_J2000_epoch_offset(tint)
 
         config = [configure(prop_initial_TLE=tle[1:], prop_start=t0t1[0], prop_step=180.0, prop_end=t0t1[1], prop_inertial_frame=Frame.EME2000,
-                            gravity_degree=-1, gravity_order=-1, ocean_tides_degree=-1, ocean_tides_order=-1, third_body_sun=False, third_body_moon=False,
-                            solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False)]
-        headers = {"OBJECT_ID": str(int(tle[1][2:7])), "OBJECT_NAME": tle[0][2:].strip(), "START_TIME": tint[0], "STOP_TIME": tint[1]}
+                            gravity_degree=-1, gravity_order=-1, ocean_tides_degree=-1, ocean_tides_order=-1, third_body_sun=False,
+                            third_body_moon=False, solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False)]
+        headers = {"OBJECT_ID": str(int(tle[1][2:7])), "OBJECT_NAME": tle[0][2:].strip(), "START_TIME": tint[0], "STOP_TIME": tint[1],
+                   "EPHEMERIS_NAME": "TLE"}
 
         for p in propagate_orbits(config)[0].array:
             times.append(p.time)
             states.append(list(p.true_state))
     except Exception as exc:
-        print(f"{tle[1:3]}: {exc}")
+        print(f"{tle[1:]}: {exc}")
         return(None)
 
-    return(headers["OBJECT_ID"], headers, times, states)
+    return(headers, times, states)
 
 def interpolate(params):
     return([list(ie.true_state) for ie in interpolate_ephemeris(*params)])
