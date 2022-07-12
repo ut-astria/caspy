@@ -44,7 +44,7 @@ def convert(fname):
         cov = rotation.transpose().dot(cov).dot(rotation)
         states.append(EstimationOutput(time=epoch, estimated_state=pv, propagated_covariance=[cov[i, j] for i in range(6) for j in range(i + 1)]))
 
-    with open(path.join(sys.argv[1], f"""{fname.replace(".txt", ".oem")}"""), "w") as fp:
+    with open(f"""{fname.replace(".txt", ".oem")}""", "w") as fp:
         fp.write(export_OEM(configure(prop_inertial_frame=Frame.EME2000), states, obj_id, obj_name, add_prop_cov=True))
 
 if (__name__ == "__main__"):
