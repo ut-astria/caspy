@@ -26,29 +26,34 @@ from os import cpu_count, path
 import sys
 
 def convert(fname):
-    toks = fname.split("_")
-    states, obj_id, obj_name = [], toks[1], toks[2]
-    with open(fname, "r") as fp:
-        lines = fp.read().splitlines()[4:]
+    try:
+        toks = path.basename(fname).split("_")
+        states, obj_id, obj_name = [], toks[1], toks[2]
+        with open(fname, "r") as fp:
+            lines = fp.read().splitlines()[4:]
 
-    for idx in range(0, len(lines) - 4, 4):
-        toks = lines[idx].split()
-        epoch = datetime.strptime(toks[0], "%Y%j%H%M%S.%f").strftime("%Y-%m-%dT%H:%M:%S.%f")
-        epoch = get_J2000_epoch_offset(epoch)
-        pv = [float(t)*1000.0 for t in toks[1:]]
-        cov = numpy.array(ltr_to_matrix([float(t)*1E6 for t in " ".join(lines[idx + 1:idx + 4]).split()]))
-        rot3 = get_lvlh_rotation(pv)
-        rotation = numpy.zeros((6, 6))
-        rotation[:3,:3] = rot3
-        rotation[3:,3:] = rot3
-        cov = rotation.transpose().dot(cov).dot(rotation)
-        states.append(EstimationOutput(time=epoch, estimated_state=pv, propagated_covariance=[cov[i, j] for i in range(6) for j in range(i + 1)]))
+        for idx in range(0, len(lines) - 4, 4):
+            toks = lines[idx].split()
+            epoch = datetime.strptime(toks[0], "%Y%j%H%M%S.%f").strftime("%Y-%m-%dT%H:%M:%S.%f")
+            epoch = get_J2000_epoch_offset(epoch)
+            pv = [float(t)*1000.0 for t in toks[1:]]
+            cov = numpy.array(ltr_to_matrix([float(t)*1E6 for t in " ".join(lines[idx + 1:idx + 4]).split()]))
+            rot3 = get_lvlh_rotation(pv)
+            rotation = numpy.zeros((6, 6))
+            rotation[:3,:3] = rot3
+            rotation[3:,3:] = rot3
+            cov = rotation.transpose().dot(cov).dot(rotation)
+            states.append(EstimationOutput(time=epoch, estimated_state=pv,
+                                           propagated_covariance=[cov[i, j] for i in range(6) for j in range(i + 1)]))
 
-    with open(f"""{fname.replace(".txt", ".oem")}""", "w") as fp:
-        fp.write(export_OEM(configure(prop_inertial_frame=Frame.EME2000), states, obj_id, obj_name, add_prop_cov=True))
+        with open(f"""{fname.replace(".txt", ".oem")}""", "w") as fp:
+            fp.write(export_OEM(configure(prop_inertial_frame=Frame.EME2000), states, obj_id, obj_name, add_prop_cov=True))
+    except Exception as exc:
+        print(f"{fname}: {exc}")
 
 if (__name__ == "__main__"):
     multiprocessing.set_start_method("spawn")
     with multiprocessing.Pool(processes=cpu_count()) as pool:
-        for _ in pool.map(convert, glob.glob(path.join(sys.argv[1] if (len(sys.argv) > 1) else ".", "*.txt"))):
+        inputs = glob.iglob(path.join(sys.argv[1] if (len(sys.argv) > 1) else ".", "*.txt"))
+        for _ in pool.imap_unordered(convert, inputs):
             pass
