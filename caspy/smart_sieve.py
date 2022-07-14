@@ -163,7 +163,7 @@ def screen_pair(params):
             else:
                 index += 1
     except Exception as exc:
-        print(f"""{object1["headers"]["EPHEMERIS_NAME"]}, {object2["headers"]["EPHEMERIS_NAME"]}: {exc}""")
+        print(f"""Error {object1["headers"]["EPHEMERIS_NAME"]}, {object2["headers"]["EPHEMERIS_NAME"]}: {exc}""")
         return(None)
     return(summary)
 
@@ -236,8 +236,16 @@ def find_TCA(t, s1, s2, delta, interpTimeScale, interpOrder, critical_dist, rp1,
     return(timeCloseApproach, minDistance)
 
 def get_covariance(obj, time, default):
-    index = bisect.bisect_right(obj["covTime"], time)
-    return(obj["cov"][index - 1] if (index) else default)
+    # If covariance in input file is not positive definite then return defaults
+    try:
+        index = bisect.bisect_right(obj["covTime"], time)
+        if (index):
+            cov = obj["cov"][index - 1]
+            la.cholesky(ltr_to_matrix(cov))
+            return(cov)
+    except Exception as exc:
+        print(f"""Warning {obj["headers"]["EPHEMERIS_NAME"]}: {exc}""")
+    return(default)
 
 # Produces CDM with input arguments
 # Chan's Approximation, outlined in Alfano 2013
