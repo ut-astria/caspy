@@ -41,6 +41,10 @@ def screen_pair(params):
         # Middle index of interpolation process
         indexOffset = int((interpOrder - 1)/2)
 
+        # Skip cases where primary and secondary have the same object ID
+        if (object1["headers"]["OBJECT_ID"] == object2["headers"]["OBJECT_ID"]):
+            return(None)
+
         # Apogee Perigee Filter
         underThreshold, rp1, rp2 = apogee_filter(states1[0], states2[0], times[1] - times[0], critical_dist)
         if (not underThreshold):

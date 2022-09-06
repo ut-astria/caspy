@@ -55,33 +55,24 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
 
             if (len(pri_task) == chunk_size or (pri_task and pri_idx == len(pri_files) - 1 and sec_idx == len(sec_files) - 1)):
                 secondary = pool.map(import_oem, zip(sec_task, (extra_keys,)*len(sec_task), (window,)*len(sec_task)))
-                if (any(not s for s in secondary)):
-                    pri_task.clear()
-                    sec_task.clear()
-                    continue
-
                 if (pri_task != task_cache):
-                    primary = pool.map(import_oem, zip(pri_task, (extra_keys,)*len(pri_task), (window,)*len(pri_task)))
-                    if (any(not p for p in primary)):
-                        pri_task.clear()
-                        sec_task.clear()
-                        continue
-
-                    pri_time = [np.arange(p[1][0], p[1][-1], 180.0).tolist() for p in primary]
-                    pri_state = pool.map(interpolate, ((Frame.EME2000, p[1], p[2], inter_order, Frame.EME2000, e, 0.0, 0.0)
-                                                       for e, p in zip(pri_time, primary)))
                     task_cache = pri_task.copy()
+                    primary = pool.map(import_oem, zip(pri_task, (extra_keys,)*len(pri_task), (window,)*len(pri_task)))
+                    pri_time, pri_state = [None]*len(primary), [None]*len(primary)
+                    for pin, pri in enumerate(primary):
+                        if (pri and len(pri[1]) > inter_order):
+                            pri_time[pin] = np.arange(pri[1][0], pri[1][-1], 180.0).tolist()
+                            pri_state[pin] = interpolate((Frame.EME2000, pri[1], pri[2], inter_order, Frame.EME2000, pri_time[pin], 0.0, 0.0))
 
                 for pri, sec, ptm, pst in zip(primary, secondary, pri_time, pri_state):
-                    idx0, idx1 = bisect.bisect_left(ptm, sec[1][0]), bisect.bisect_right(ptm, sec[1][-1])
-                    use_time, use_state = ptm[idx0:idx1], pst[idx0:idx1]
-                    if (len(use_time) < 2):
-                        continue
-                    sec_state = interpolate((Frame.EME2000, sec[1], sec[2], inter_order, Frame.EME2000, use_time, 0.0, 0.0))
-
-                    pri_map = {"headers": pri[0], "states": use_state, "covTime": pri[3], "cov": pri[4]}
-                    sec_map = {"headers": sec[0], "states": sec_state, "covTime": sec[3], "cov": sec[4]}
-                    mp_input.append([pri_map, sec_map, use_time, output_path, inter_order, inter_time, distance, pos_sigma, vel_sigma, radius])
+                    if (ptm and pst and sec and len(sec[1]) > inter_order):
+                        idx0, idx1 = bisect.bisect_left(ptm, sec[1][0]), bisect.bisect_right(ptm, sec[1][-1])
+                        use_time, use_state = ptm[idx0:idx1], pst[idx0:idx1]
+                        if (len(use_time) > inter_order):
+                            sec_state = interpolate((Frame.EME2000, sec[1], sec[2], inter_order, Frame.EME2000, use_time, 0.0, 0.0))
+                            pri_map = {"headers": pri[0], "states": use_state, "covTime": pri[3], "cov": pri[4]}
+                            sec_map = {"headers": sec[0], "states": sec_state, "covTime": sec[3], "cov": sec[4]}
+                            mp_input.append([pri_map, sec_map, use_time, output_path, inter_order, inter_time, distance, pos_sigma, vel_sigma, radius])
 
                 if (mp_input):
                     for result in pool.imap_unordered(sms.screen_pair, mp_input):
@@ -121,19 +112,11 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
 
             if (len(pri_task) == chunk_size or (pri_task and pri_idx == len(pri_tles) - 1 and sec_idx == len(sec_tles) - 1)):
                 if (pri_task != task_cache):
-                    primary = pool.map(propagate_tle, zip(pri_task, (window,)*len(pri_task), (None,)*len(pri_task), (None,)*len(pri_task)))
-                    if (any(not p for p in primary)):
-                        pri_task.clear()
-                        sec_task.clear()
-                        continue
                     task_cache = pri_task.copy()
+                    primary = pool.map(propagate_tle, zip(pri_task, (window,)*len(pri_task), (None,)*len(pri_task), (None,)*len(pri_task)))
 
                 secondary = pool.map(propagate_tle,
                                      zip(sec_task, (window,)*len(pri_task), (p[1][0] for p in primary), (p[1][-1] for p in primary)))
-                if (any(not s for s in secondary)):
-                    pri_task.clear()
-                    sec_task.clear()
-                    continue
 
                 for pri, sec in zip(primary, secondary):
                     pri_map = {"headers": pri[0], "states": pri[2], "covTime": [], "cov": []}
@@ -271,7 +254,12 @@ def propagate_tle(params):
     return(headers, times, states)
 
 def interpolate(params):
-    return([list(ie.true_state) for ie in interpolate_ephemeris(*params)])
+    try:
+        return([list(ie.true_state) for ie in interpolate_ephemeris(*params)])
+    except Exception as exc:
+        print(f"interpolate_ephemeris error: {exc}")
+
+    return(None)
 
 def dir_or_file(param):
     if (os.path.isdir(param) or os.path.isfile(param)):
