@@ -32,7 +32,7 @@ def convert(fname):
         with open(fname, "r") as fp:
             lines = fp.read().splitlines()[4:]
 
-        for idx in range(0, len(lines) - 4, 4):
+        for idx in range(0, len(lines), 4):
             toks = lines[idx].split()
             epoch = get_J2000_epoch_offset(datetime.strptime(toks[0], "%Y%j%H%M%S.%f").strftime("%Y-%m-%dT%H:%M:%S.%f"))
             pv = [float(t)*1000.0 for t in toks[1:]]

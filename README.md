@@ -20,6 +20,9 @@ Usage
    in <https://www.space-track.org/documents/Spaceflight_Safety_Handbook_for_Operators.pdf>.
    Use `utils/meme_to_oem.py` to convert these files to OEM format.
 
+3. Download the UT object catalog ID file to your home directory to ensure caspy uses object identifiers consistently. The file must be updated frequently to account for launches etc.
+
+`curl -o ~/object_catalog.csv http://astria.tacc.utexas.edu/AstriaGraph/OD_stats/object_catalog.csv`
 
 Docker 
 ______
@@ -30,9 +33,8 @@ You will first need to clone [orbdetpy](https://github.com/ut-astria/orbdetpy) a
 docker build -t caspy:core .
 docker run --rm caspy:core -h
 ```
-=======
+
 Examples
 --------
 
 1. `examples/tle_cas.py` demonstrates TLE screening functionality.
-

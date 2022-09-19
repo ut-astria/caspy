@@ -30,8 +30,19 @@ from os import path
 _MU_EARTH = 3.986004418E14
 
 def init_process():
-    global _cdm_template
+    global _cdm_template, _object_map
+
+    _object_map = {}
     _cdm_template = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm"))
+
+    # Load UT object ID catalog file if it exists in the user's home directory
+    try:
+        with open(path.join(path.expanduser("~"), "object_catalog.csv"), "r") as fp:
+            for line in fp.read().splitlines():
+                tok = line.split(",")
+                _object_map[tok[1]] = tok[0]
+    except Exception as _:
+        pass
 
 def screen_pair(params):
     try:
@@ -40,6 +51,10 @@ def screen_pair(params):
 
         # Middle index of interpolation process
         indexOffset = int((interpOrder - 1)/2)
+
+        # If the OEM file had a COSPAR ID then map it to a NORAD ID else leave it as is
+        object1["headers"]["OBJECT_ID"] = _object_map.get(object1["headers"]["OBJECT_ID"], object1["headers"]["OBJECT_ID"])
+        object2["headers"]["OBJECT_ID"] = _object_map.get(object2["headers"]["OBJECT_ID"], object2["headers"]["OBJECT_ID"])
 
         # Skip cases where primary and secondary have the same object ID
         if (object1["headers"]["OBJECT_ID"] == object2["headers"]["OBJECT_ID"]):
