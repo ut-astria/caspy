@@ -20,9 +20,13 @@ Usage
    in <https://www.space-track.org/documents/Spaceflight_Safety_Handbook_for_Operators.pdf>.
    Use `utils/meme_to_oem.py` to convert these files to OEM format.
 
-3. Download the UT object catalog ID file to your home directory to ensure caspy uses object identifiers consistently. The file must be updated frequently to account for launches etc.
+3. Download the UT object catalog ID file to ensure caspy uses object identifiers consistently. The file must be updated frequently to account for launches etc. Provide the fully qualified file name in the environment variable `CASPY_OBJECT_CATALOG` before running caspy. For example:
 
-`curl -o ~/object_catalog.csv http://astria.tacc.utexas.edu/AstriaGraph/OD_stats/object_catalog.csv`
+```
+export CASPY_OBJECT_CATALOG=$HOME/object_catalog.csv
+
+curl -o $CASPY_OBJECT_CATALOG http://astria.tacc.utexas.edu/AstriaGraph/OD_stats/object_catalog.csv
+```
 
 Docker 
 ______

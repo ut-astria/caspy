@@ -25,7 +25,7 @@ from orbdetpy.conversion import get_J2000_epoch_offset, get_UTC_string, ltr_to_m
 from orbdetpy.estimation import determine_orbit
 from orbdetpy.utilities import interpolate_ephemeris
 from orbdetpy.rpc.messages_pb2 import Parameter
-from os import path
+from os import getenv, path
 
 _MU_EARTH = 3.986004418E14
 
@@ -35,9 +35,10 @@ def init_process():
     _object_map = {}
     _cdm_template = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm"))
 
-    # Load UT object ID catalog file if it exists in the user's home directory
+    # Load UT object ID catalog if it exists
     try:
-        with open(path.join(path.expanduser("~"), "object_catalog.csv"), "r") as fp:
+        cat_file = getenv("CASPY_OBJECT_CATALOG", path.expanduser(path.join("~", "object_catalog.csv")))
+        with open(cat_file, "r") as fp:
             for line in fp.read().splitlines():
                 tok = line.split(",")
                 _object_map[tok[1]] = tok[0]
