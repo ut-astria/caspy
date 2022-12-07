@@ -16,7 +16,7 @@
 
 import argparse
 import bisect
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import glob
 import multiprocessing
 import numpy as np
@@ -215,8 +215,12 @@ def import_oem(params):
             elif (line[0].isnumeric() and ":" in line):
                 toks = line.split()
                 if (not end_time):
-                    end_time = (datetime.fromisoformat(toks[0]) + timedelta(hours=window)).isoformat(timespec="milliseconds")
-                if (toks[0] <= end_time):
+                    prev_time = datetime.fromisoformat(toks[0]).replace(tzinfo=timezone.utc)
+                    end_time = (prev_time + timedelta(hours=window)).isoformat(timespec="milliseconds")
+
+                curr_time = datetime.fromisoformat(toks[0]).replace(tzinfo=timezone.utc)
+                if ((len(times) == 0 or (curr_time - prev_time).total_seconds() >= 60.0) and toks[0] <= end_time):
+                    prev_time = curr_time
                     times.append(toks[0])
                     states.append([float(t)*1000.0 for t in toks[1:]])
 
@@ -234,8 +238,8 @@ def propagate_tle(params):
         if (t0t1[0] and t0t1[1]):
             tint = get_UTC_string(t0t1)
         else:
-            tint = ((datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]))).isoformat(),
-                    (datetime.strptime(tle[1][18:23], "%y%j") + timedelta(days=float(tle[1][23:32]), hours=window)).isoformat())
+            dt0 = datetime.strptime(tle[1][18:23], "%y%j").replace(tzinfo=timezone.utc) + timedelta(days=float(tle[1][23:32]))
+            tint = (dt0.isoformat(), (dt0 + timedelta(hours=window)).isoformat())
             t0t1 = get_J2000_epoch_offset(tint)
 
         config = [configure(prop_initial_TLE=tle[1:], prop_start=t0t1[0], prop_step=180.0, prop_end=t0t1[1], prop_inertial_frame=Frame.EME2000,
@@ -266,6 +270,12 @@ def dir_or_file(param):
         return(param)
     raise(argparse.ArgumentTypeError(f"{param} is not a valid directory or file"))
 
+def list_oem_files(path_or_file):
+    if (os.path.isdir(path_or_file)):
+        return([f for f in glob.iglob(os.path.join(path_or_file, "**"), recursive=True) if (os.path.isfile(f) and f.endswith(".oem"))])
+    else:
+        return([path_or_file])
+
 if (__name__ == "__main__"):
     parser = argparse.ArgumentParser(description="Conjunction Analysis", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("primary-path", help="Primary object OEM file or directory path", type=dir_or_file)
@@ -284,8 +294,8 @@ if (__name__ == "__main__"):
         exit(1)
 
     arg = parser.parse_args()
-    pri_path, sec_path = getattr(arg, "primary-path"), getattr(arg, "secondary-path")
-    pri_files = glob.glob(os.path.join(pri_path, "*.oem")) if (os.path.isdir(pri_path)) else [pri_path]
-    sec_files = glob.glob(os.path.join(sec_path, "*.oem")) if (os.path.isdir(sec_path)) else [sec_path]
+    pri_files = list_oem_files(getattr(arg, "primary-path"))
+    sec_files = list_oem_files(getattr(arg, "secondary-path"))
+
     run_cas(pri_files, sec_files, arg.output_path, arg.distance, arg.radius, arg.pos_sigma, arg.vel_sigma,
             arg.inter_order, arg.inter_time, arg.extra_keys.split(","), arg.window)

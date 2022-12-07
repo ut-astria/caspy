@@ -20,11 +20,10 @@ import json
 from mako.template import Template
 import numpy as np
 import numpy.linalg as la
-from orbdetpy import configure, EstimationType, Frame, Filter, build_measurement, MeasurementType
+from orbdetpy import configure, Frame
 from orbdetpy.conversion import get_J2000_epoch_offset, get_UTC_string, ltr_to_matrix
-from orbdetpy.estimation import determine_orbit
+from orbdetpy.propagation import propagate_orbits
 from orbdetpy.utilities import interpolate_ephemeris
-from orbdetpy.rpc.messages_pb2 import Parameter
 from os import getenv, path
 
 _MU_EARTH = 3.986004418E14
@@ -110,27 +109,21 @@ def screen_pair(params):
                 ca_utc = get_UTC_string(time_ca)
                 screen_start, screen_stop = get_UTC_string((times[0], times[-1]))
 
-                # Propagate states and covariances to TCA
-                def_cov = [pos_sigma**2]*3 + [vel_sigma**2]*3
-                cfg = [configure(prop_start=time_pre_ca, prop_initial_state=state1_pre_ca, prop_inertial_frame=Frame.EME2000,
-                                 ocean_tides_degree=-1, ocean_tides_order=-1, solid_tides_sun=False, solid_tides_moon=False,
-                                 estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=get_covariance(object1, time_pre_ca, def_cov),
-                                 drag_coefficient=Parameter(value=2.0, min=1.0, max=3.0, estimation=EstimationType.UNDEFINED),
-                                 rp_coeff_reflection=Parameter(value=1.5, min=1.0, max=2.0, estimation=EstimationType.UNDEFINED),
-                                 estm_process_noise=(1E-8,)*6, estm_DMC_corr_time=0, estm_DMC_sigma_pert=0),
-                       configure(prop_start=time_pre_ca, prop_initial_state=state2_pre_ca, prop_inertial_frame=Frame.EME2000,
-                                 ocean_tides_degree=-1, ocean_tides_order=-1, solid_tides_sun=False, solid_tides_moon=False,
-                                 estm_filter=Filter.UNSCENTED_KALMAN, estm_covariance=get_covariance(object2, time_pre_ca, def_cov),
-                                 drag_coefficient=Parameter(value=2.0, min=1.0, max=3.0, estimation=EstimationType.UNDEFINED),
-                                 rp_coeff_reflection=Parameter(value=1.5, min=1.0, max=2.0, estimation=EstimationType.UNDEFINED),
-                                 estm_process_noise=(1E-8,)*6, estm_DMC_corr_time=0, estm_DMC_sigma_pert=0)]
-                cfg[0].measurements[MeasurementType.POSITION].error[:] = [100.0]*3
-                cfg[1].measurements[MeasurementType.POSITION].error[:] = [100.0]*3
+                def_cov = [pos_sigma**2, 0, pos_sigma**2, 0, 0, pos_sigma**2, 0, 0, 0, vel_sigma**2,
+                           0, 0, 0, 0, vel_sigma**2, 0, 0, 0, 0, 0, vel_sigma**2]
+                prop_cov1 = np.array(ltr_to_matrix(get_covariance(object1, time_pre_ca, def_cov)))
+                prop_cov2 = np.array(ltr_to_matrix(get_covariance(object2, time_pre_ca, def_cov)))
 
-                fit = determine_orbit(cfg, [[build_measurement(time_ca, "", [])]]*2)
-                state_ca1, state_ca2 = fit[0][-1].estimated_state, fit[1][-1].estimated_state
-                prop_cov1 = np.array(ltr_to_matrix(fit[0][-1].propagated_covariance))
-                prop_cov2 = np.array(ltr_to_matrix(fit[1][-1].propagated_covariance))
+                # Propagate to TCA
+                cfg = [configure(prop_start=time_pre_ca, prop_initial_state=state1_pre_ca, prop_end=time_ca, prop_step=time_ca - time_pre_ca,
+                                 prop_inertial_frame=Frame.EME2000, ocean_tides_degree=-1, ocean_tides_order=-1,
+                                 solid_tides_sun=False, solid_tides_moon=False),
+                       configure(prop_start=time_pre_ca, prop_initial_state=state2_pre_ca, prop_end=time_ca, prop_step=time_ca - time_pre_ca,
+                                 prop_inertial_frame=Frame.EME2000, ocean_tides_degree=-1, ocean_tides_order=-1,
+                                 solid_tides_sun=False, solid_tides_moon=False)]
+                prop = propagate_orbits(cfg)
+
+                state_ca1, state_ca2 = prop[0].array[-1].true_state, prop[1].array[-1].true_state
                 pos_obj1, vel_obj1 = state_ca1[:3], state_ca1[3:]
                 pos_obj2, vel_obj2 = state_ca2[:3], state_ca2[3:]
                 miss_dist = la.norm(np.subtract(pos_obj1, pos_obj2))
