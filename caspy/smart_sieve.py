@@ -26,7 +26,7 @@ from orbdetpy.propagation import propagate_orbits
 from orbdetpy.utilities import interpolate_ephemeris
 from os import getenv, path
 
-_MU_EARTH = 3.986004418E14
+_MU_EARTH = 3.986004415E14
 
 def init_process():
     global _cdm_template, _object_map
@@ -46,11 +46,8 @@ def init_process():
 
 def screen_pair(params):
     try:
-        object1, object2, times, out_dir, inter_order, inter_scale, critical_dist, pos_sigma, vel_sigma, body_radius = params
+        object1, object2, times, out_dir, critical_dist, pos_sigma, vel_sigma, body_radius = params
         states1, states2 = object1["states"], object2["states"]
-
-        # Middle index of interpolation process
-        offset = int((inter_order - 1)/2)
 
         # If the OEM file had a COSPAR ID then map it to a NORAD ID else leave it as is
         object1["headers"]["OBJECT_ID"] = _object_map.get(object1["headers"]["OBJECT_ID"], object1["headers"]["OBJECT_ID"])
@@ -82,23 +79,23 @@ def screen_pair(params):
         states2.append(prop[1].array[1].true_state)
         states2.append(prop[1].array[2].true_state)
 
-        time_ca, event_found, index, event_min_dist, max_index, summary = 0, False, offset, critical_dist, len(times) - offset, []
+        index, event_found, event_min_dist, summary = 2, False, critical_dist, []
 
         # Iterate through each time step
-        while (index < max_index):
+        while (index < len(times) - 2):
             # Run smart Sieve
-            sieve_pass, skip_index = sift(states1[index], states2[index], rp1, rp2, times[1] - times[0], critical_dist)
+            sieve_pass, skip_index = sift(states1[index], states2[index], rp1, rp2, 180.0, critical_dist)
             if (not sieve_pass):
                 index += skip_index
                 continue
 
-            inter_time = [times[index + j] for j in range(-offset, offset + 1)]
-            inter_state1 = [states1[index + j] for j in range(-offset, offset + 1)]
-            inter_state2 = [states2[index + j] for j in range(-offset, offset + 1)]
+            inter_time = [times[index + j] for j in range(-2, 3)]
+            inter_state1 = [states1[index + j] for j in range(-2, 3)]
+            inter_state2 = [states2[index + j] for j in range(-2, 3)]
             index += 1
 
             # If smart sieve passed, run binary search
-            tca_result = find_tca(inter_time, inter_state1, inter_state2, times[1] - times[0], inter_scale, inter_order, critical_dist, rp1, rp2)
+            tca_result = find_tca(inter_time, inter_state1, inter_state2, times[1] - times[0], critical_dist, rp1, rp2)
             if (not tca_result):
                 continue
 
@@ -108,7 +105,7 @@ def screen_pair(params):
                 time_ca, event_min_dist, state_ca1, state_ca2 = tca_result
 
             # If event has just ended
-            if (event_found and (tca_result[1] >= event_min_dist or index == max_index)):
+            if (event_found and (tca_result[1] >= event_min_dist or index == len(times) - 2)):
                 ca_utc = get_UTC_string(time_ca)
                 screen_start, screen_stop = get_UTC_string((times[2], times[-3]))
 
@@ -118,17 +115,17 @@ def screen_pair(params):
 
                 def_cov = [pos_sigma**2, 0, pos_sigma**2, 0, 0, pos_sigma**2, 0, 0, 0, vel_sigma**2,
                            0, 0, 0, 0, vel_sigma**2, 0, 0, 0, 0, 0, vel_sigma**2]
-                prop_cov1 = np.array(ltr_to_matrix(get_covariance(object1, time_ca, def_cov)))
-                prop_cov2 = np.array(ltr_to_matrix(get_covariance(object2, time_ca, def_cov)))
+                cov1 = np.array(ltr_to_matrix(get_covariance(object1, time_ca, def_cov)))
+                cov2 = np.array(ltr_to_matrix(get_covariance(object2, time_ca, def_cov)))
 
                 rot1_3x3, rot1_6x6 = get_rotation(pos_obj1, vel_obj1)
                 rot2_3x3, rot2_6x6 = get_rotation(pos_obj2, vel_obj2)
 
-                cov1_rtn = rot1_6x6.dot(prop_cov1).dot(rot1_6x6.transpose())
-                cov2_rtn = rot2_6x6.dot(prop_cov2).dot(rot2_6x6.transpose())
+                cov1_rtn = rot1_6x6.dot(cov1).dot(rot1_6x6.transpose())
+                cov2_rtn = rot2_6x6.dot(cov2).dot(rot2_6x6.transpose())
                 rel_pos = rot1_3x3.dot(np.subtract(pos_obj2, pos_obj1))
                 rel_vel = rot1_3x3.dot(np.subtract(vel_obj2, vel_obj1))
-                coll_prob = compute_pc(state_ca1, state_ca2, prop_cov1, prop_cov2, body_radius)
+                coll_prob = compute_pc(state_ca1, state_ca2, cov1, cov2, body_radius)
 
                 object1.update({"CREATION_DATE":datetime.now(timezone.utc).isoformat(timespec="milliseconds")[:-6], "TCA": ca_utc,
                                 "MISS_DISTANCE": miss_dist, "RELATIVE_SPEED": la.norm(np.subtract(vel_obj1, vel_obj2)),
@@ -179,20 +176,20 @@ def apogee_filter(s1, s2, delta, critical_dist):
     pos2, vel2 = s2[:3], s2[3:]
     r1, v1sq = la.norm(pos1), np.dot(vel1, vel1)
     r2, v2sq = la.norm(pos2), np.dot(vel2, vel2)
-    esc_vel = np.sqrt(2*_MU_EARTH/min(r1, r2))
+    esc_vel = np.sqrt(2.0*_MU_EARTH/min(r1, r2))
     threshold = critical_dist + esc_vel*delta
 
     a1 = _MU_EARTH/(2*_MU_EARTH/r1 - v1sq)
     a2 = _MU_EARTH/(2*_MU_EARTH/r2 - v2sq)
     h1v, h2v = np.cross(pos1, vel1), np.cross(pos2, vel2)
     h1sq, h2sq = np.dot(h1v, h1v), np.dot(h2v, h2v)
-    e1sq = 1 - h1sq/(_MU_EARTH*a1)
-    e2sq = 1 - h2sq/(_MU_EARTH*a2)
-    e1 = np.sqrt(e1sq) if (e1sq > 0) else 0
-    e2 = np.sqrt(e2sq) if (e2sq > 0) else 0
+    e1sq = 1.0 - h1sq/(_MU_EARTH*a1)
+    e2sq = 1.0 - h2sq/(_MU_EARTH*a2)
+    e1 = np.sqrt(e1sq) if (e1sq > 0) else 0.0
+    e2 = np.sqrt(e2sq) if (e2sq > 0) else 0.0
 
-    rp1, ra1 = a1*(1 - e1), a1*(1 + e1)
-    rp2, ra2 = a2*(1 - e2), a2*(1 + e2)
+    rp1, ra1 = a1*(1.0 - e1), a1*(1.0 + e1)
+    rp2, ra2 = a2*(1.0 - e2), a2*(1.0 + e2)
     if (abs(max(rp1, rp2) - min(ra1, ra2)) > threshold):
         return(False, rp1, rp2)
     else:
@@ -220,30 +217,28 @@ def sift(s1, s2, rp1, rp2, delta, critical_dist):
                 return(True, 0)
 
 # Function to find TCA using a binary search after the smart sieve process
-def find_tca(time, state1, state2, delta, inter_scale, inter_order, critical_dist, rp1, rp2):
-    offset = int((inter_order - 1)/2)
+def find_tca(time, state1, state2, delta, critical_dist, rp1, rp2):
     distance = la.norm(np.array(state2)[:,:3] - np.array(state1)[:,:3], axis=1)
-    min_dist = min(distance)
-    min_idx = np.where(distance == min_dist)[0][0]
+    min_idx = np.argmin(distance)
+    min_dist = distance[min_idx]
     tca, state_ca1, state_ca2 = time[min_idx], state1[min_idx], state2[min_idx]
 
-    if (min_idx == offset and delta > inter_scale):
+    if (min_idx == 2 and delta > 0.001):
         if (delta == time[1] - time[0]):
             inter_time, inter_state1, inter_state2 = time, state1, state2
         else:
-            inter = interpolate_ephemeris(Frame.EME2000, time, state1, inter_order, Frame.EME2000, time[0], time[-1], delta)
+            inter = interpolate_ephemeris(Frame.EME2000, time, state1, 5, Frame.EME2000, time[0], time[-1], delta)
             inter_time = [ix.time for ix in inter]
             inter_state1 = [ix.true_state for ix in inter]
-            inter_state2 = [ix.true_state for ix in
-                            interpolate_ephemeris(Frame.EME2000, time, state2, inter_order, Frame.EME2000, time[0], time[-1], delta)]
+            inter_state2 = [ix.true_state for ix in interpolate_ephemeris(Frame.EME2000, time, state2, 5, Frame.EME2000, time[0], time[-1], delta)]
 
-        for i in range(offset, len(inter_time) - offset):
-            sieve_pass, skip_index = sift(inter_state1[i], inter_state2[i], rp1, rp2, delta, critical_dist)
+        for i in range(2, len(inter_time) - 2):
+            sieve_pass, _ = sift(inter_state1[i], inter_state2[i], rp1, rp2, delta, critical_dist)
             if (sieve_pass):
-                t = [inter_time[i + j] for j in range(-offset, offset + 1)]
-                s1 = [inter_state1[i + j] for j in range(-offset, offset + 1)]
-                s2 = [inter_state2[i + j] for j in range(-offset, offset + 1)]
-                check = find_tca(t, s1, s2, delta/2.0, inter_scale, inter_order, critical_dist, rp1, rp2)
+                t = [inter_time[i + j] for j in range(-2, 3)]
+                s1 = [inter_state1[i + j] for j in range(-2, 3)]
+                s2 = [inter_state2[i + j] for j in range(-2, 3)]
+                check = find_tca(t, s1, s2, delta/2.0, critical_dist, rp1, rp2)
                 if (check and check[1] < min_dist):
                     tca, min_dist, state_ca1, state_ca2 = check
 
