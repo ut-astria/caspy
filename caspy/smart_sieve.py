@@ -273,10 +273,9 @@ def get_covariance(obj, time, default):
     return(default)
 
 # Chan's Pc approximation, outlined in Alfano 2013
-def compute_pc(state1, state2, covar1, covar2, body_radius):
+def compute_pc(state1, state2, cov1, cov2, body_radius):
     rel_state = np.subtract(state2, state1)
-    index = np.ix_([0, 1, 2], [0, 1, 2])
-    Prel = np.add(covar1[index], covar2[index])
+    Prel = np.add(cov1, cov2)[:3,:3]
 
     ux = np.divide(rel_state[:3], la.norm(rel_state[:3]))
     uy = np.cross(rel_state[:3], rel_state[3:])
@@ -285,10 +284,10 @@ def compute_pc(state1, state2, covar1, covar2, body_radius):
     T = np.vstack((ux, uy))
     w, v = la.eigh(T.dot(Prel).dot(T.transpose()))
     xbar, ybar = v.transpose().dot(T.dot(rel_state[:3]))
-    sigx, sigy = np.sqrt(w)
+    sigx, sigy = w
 
-    u1 = body_radius**2/(sigx*sigy)
-    u2 = xbar**2/sigx**2 + ybar**2/sigy**2
-    pc = np.exp(-u2/2)*(1 - np.exp(-u1/2)) + u1**2*u2*np.exp(0.25*u2*(u1 - 2))/8.0
+    u1 = body_radius**2/(np.sqrt(sigx)*np.sqrt(sigy))
+    u2 = xbar**2/sigx + ybar**2/sigy
+    pc = np.exp(-0.5*u2)*(1 - np.exp(-0.5*u1) + 0.5*u2*(1 - np.exp(-0.5*u1)*(1 + 0.5*u1)))
 
     return(0.0 if (np.isinf(pc)) else pc)
