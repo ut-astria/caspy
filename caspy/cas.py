@@ -34,17 +34,39 @@ else:
 
 def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0, pos_sigma=1000.0, vel_sigma=0.1,
             extra_keys=[], window=24.0, chunk_size=os.cpu_count()):
-    if (not hasattr(pri_files, "__len__")):
-        pri_files = list(pri_files)
-    if (not hasattr(sec_files, "__len__")):
-        sec_files = list(sec_files)
+
+    pri_files = list(os.path.realpath(os.path.expanduser(f)) for f in pri_files)
+    pri_files.sort()
+    sec_files = list(os.path.realpath(os.path.expanduser(f)) for f in sec_files)
+    sec_files.sort()
 
     try:
         multiprocessing.set_start_method("spawn")
     except Exception as _:
         pass
     pool = multiprocessing.Pool(chunk_size, sms.init_process)
-    done, task_cache, pri_task, sec_task, mp_input, summary = set(), [], [], [], [], []
+
+    eph_start, eph_stop = "0", "9"
+    unique = list(set(pri_files + sec_files))
+    oem_data = pool.map(import_oem, zip(unique, (extra_keys,)*len(unique), (window,)*len(unique)))
+    oem_cache = {unique[i]:d for i, d in enumerate(oem_data) if (d and len(d[2]) > 5)}
+
+    for prf in pri_files:
+        val = oem_cache[prf]
+        eph_start = max(val[0]["START_TIME"], eph_start)
+        eph_stop = min(val[0]["STOP_TIME"], eph_stop)
+
+    use_time = np.arange(*get_J2000_epoch_offset((eph_start, eph_stop)), 60.0).tolist()
+    inter_state = pool.map(interpolate, zip(oem_cache.values(), (use_time,)*len(oem_cache)))
+
+    for oce, ixs in zip(oem_cache.values(), inter_state):
+        oce[1], oce[2] = ixs
+
+    del unique
+    del oem_data
+    del use_time
+    del inter_state
+    done, pri_task, sec_task, mp_input, summary = set(), [], [], [], []
 
     for pri_idx, pri_file in enumerate(pri_files):
         done.add(pri_file)
@@ -54,25 +76,19 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
                 sec_task.append(sec_file)
 
             if (len(pri_task) == chunk_size or (pri_task and pri_idx == len(pri_files) - 1 and sec_idx == len(sec_files) - 1)):
-                secondary = pool.map(import_oem, zip(sec_task, (extra_keys,)*len(sec_task), (window,)*len(sec_task)))
-                if (pri_task != task_cache):
-                    task_cache = pri_task.copy()
-                    primary = pool.map(import_oem, zip(pri_task, (extra_keys,)*len(pri_task), (window,)*len(pri_task)))
-                    pri_time, pri_state = [None]*len(primary), [None]*len(primary)
-                    for pin, pri in enumerate(primary):
-                        if (pri and len(pri[1]) > 5):
-                            pri_time[pin] = np.arange(pri[1][0], pri[1][-1], 60.0).tolist()
-                            pri_state[pin] = interpolate((Frame.EME2000, pri[1], pri[2], 5, Frame.EME2000, pri_time[pin], 0.0, 0.0))
+                for pt, st in zip(pri_task, sec_task):
+                    pri, sec = oem_cache[pt], oem_cache[st]
+                    if (not (pri[1] and pri[2] and sec[1] and sec[2])):
+                        continue
 
-                for pri, sec, ptm, pst in zip(primary, secondary, pri_time, pri_state):
-                    if (ptm and pst and sec and len(sec[1]) > 5):
-                        idx0, idx1 = bisect.bisect_left(ptm, sec[1][0]), bisect.bisect_right(ptm, sec[1][-1])
-                        use_time, use_state = ptm[idx0:idx1], pst[idx0:idx1]
-                        if (len(use_time) > 5):
-                            sec_state = interpolate((Frame.EME2000, sec[1], sec[2], 5, Frame.EME2000, use_time, 0.0, 0.0))
-                            pri_map = {"headers": pri[0], "states": use_state, "covTime": pri[3], "cov": pri[4]}
-                            sec_map = {"headers": sec[0], "states": sec_state, "covTime": sec[3], "cov": sec[4]}
-                            mp_input.append([pri_map, sec_map, use_time, output_path, distance, pos_sigma, vel_sigma, radius])
+                    i0, i1 = bisect.bisect_left(pri[1], sec[1][0]), bisect.bisect_right(pri[1], sec[1][-1])
+                    ut = pri[1][i0:i1]
+                    if (len(ut) <= 5):
+                        continue
+
+                    pri_map = {"headers": pri[0], "states": pri[2][i0:i1], "covTime": pri[3], "cov": pri[4]}
+                    sec_map = {"headers": sec[0], "states": sec[2], "covTime": sec[3], "cov": sec[4]}
+                    mp_input.append([pri_map, sec_map, ut, output_path, distance, pos_sigma, vel_sigma, radius])
 
                 if (mp_input):
                     for result in pool.imap_unordered(sms.screen_pair, mp_input):
@@ -84,24 +100,34 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
                 mp_input.clear()
 
     pool.close()
-    summary.sort(key=lambda s: s[4])
+
     with open(os.path.join(output_path, f"""ca_{datetime.now().strftime("%Y%m%dT%H%M%S")}.txt"""), "w") as fp:
+        summary.sort(key=lambda s: s[4])
         for entry in summary:
             fp.write(",".join(str(s) for s in entry) + "\n")
 
 def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.0, pos_sigma=1000.0, vel_sigma=0.1,
                 window=24.0, chunk_size=os.cpu_count()):
-    if (not hasattr(pri_tles, "__len__")):
-        pri_tles = list(pri_tles)
-    if (not hasattr(sec_tles, "__len__")):
-        sec_tles = list(sec_tles)
+
+    pri_tles = sorted(pri_tles, key=lambda k:int(k[1][2:7].strip()))
+    sec_tles = sorted(sec_tles, key=lambda k:int(k[1][2:7].strip()))
 
     try:
         multiprocessing.set_start_method("spawn")
     except Exception as _:
         pass
     pool = multiprocessing.Pool(chunk_size, sms.init_process)
-    done, task_cache, pri_task, sec_task, mp_input, summary = set(), [], [], [], [], []
+
+    all_tles = pri_tles + sec_tles
+    dt0 = datetime.strptime(all_tles[0][1][18:23], "%y%j").replace(tzinfo=timezone.utc) + timedelta(days=float(all_tles[0][1][23:32]))
+    t0, t1 = dt0.isoformat(), (dt0 + timedelta(hours=window)).isoformat()
+
+    tle_data = pool.map(propagate_tle, zip(all_tles, (t0,)*len(all_tles), (t1,)*len(all_tles)))
+    tle_cache = {all_tles[i][1]:d for i, d in enumerate(tle_data) if (d and len(d[2]) > 5)}
+
+    del all_tles
+    del tle_data
+    done, pri_task, sec_task, mp_input, summary = set(), [], [], [], []
 
     for pri_idx, pri_tle in enumerate(pri_tles):
         done.add(pri_tle[1])
@@ -111,14 +137,8 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
                 sec_task.append(sec_tle)
 
             if (len(pri_task) == chunk_size or (pri_task and pri_idx == len(pri_tles) - 1 and sec_idx == len(sec_tles) - 1)):
-                if (pri_task != task_cache):
-                    task_cache = pri_task.copy()
-                    primary = pool.map(propagate_tle, zip(pri_task, (window,)*len(pri_task), (None,)*len(pri_task), (None,)*len(pri_task)))
-
-                secondary = pool.map(propagate_tle,
-                                     zip(sec_task, (window,)*len(pri_task), (p[1][0] for p in primary), (p[1][-1] for p in primary)))
-
-                for pri, sec in zip(primary, secondary):
+                for pt, st in zip(pri_task, sec_task):
+                    pri, sec = tle_cache[pt[1]], tle_cache[st[1]]
                     pri_map = {"headers": pri[0], "states": pri[2], "covTime": [], "cov": []}
                     sec_map = {"headers": sec[0], "states": sec[2], "covTime": [], "cov": []}
                     mp_input.append([pri_map, sec_map, pri[1], output_path, distance, pos_sigma, vel_sigma, radius])
@@ -229,25 +249,20 @@ def import_oem(params):
         print(f"{oem_file}: {exc}")
         return(None)
 
-    return(headers, [times] if (isinstance(times, float)) else list(times), states, cov_times, cov)
+    return([headers, [times] if (isinstance(times, float)) else list(times), states, cov_times, cov])
 
 def propagate_tle(params):
     try:
-        t0t1, times, states = [None]*2, [], []
-        tle, window, t0t1[0], t0t1[1] = params
-        if (t0t1[0] and t0t1[1]):
-            tint = get_UTC_string(t0t1)
-        else:
-            dt0 = datetime.strptime(tle[1][18:23], "%y%j").replace(tzinfo=timezone.utc) + timedelta(days=float(tle[1][23:32]))
-            tint = (dt0.isoformat(), (dt0 + timedelta(hours=window)).isoformat())
-            t0t1 = get_J2000_epoch_offset(tint)
+        tle, t0, t1 = params
+        tt = get_J2000_epoch_offset(params[1:3])
 
-        config = [configure(prop_initial_TLE=tle[1:], prop_start=t0t1[0], prop_step=60.0, prop_end=t0t1[1], prop_inertial_frame=Frame.EME2000,
+        config = [configure(prop_initial_TLE=tle[1:], prop_start=tt[0], prop_step=60.0, prop_end=tt[1], prop_inertial_frame=Frame.EME2000,
                             gravity_degree=-1, gravity_order=-1, ocean_tides_degree=-1, ocean_tides_order=-1, third_body_sun=False,
                             third_body_moon=False, solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False)]
-        headers = {"OBJECT_ID": str(int(tle[1][2:7])), "OBJECT_NAME": tle[0][2:].strip(), "START_TIME": tint[0], "STOP_TIME": tint[1],
+        headers = {"OBJECT_ID": str(int(tle[1][2:7])), "OBJECT_NAME": tle[0][2:].strip(), "START_TIME": t0, "STOP_TIME": t1,
                    "EPHEMERIS_NAME": "TLE"}
 
+        times, states = [], []
         for p in propagate_orbits(config)[0].array:
             times.append(p.time)
             states.append(list(p.true_state))
@@ -257,13 +272,16 @@ def propagate_tle(params):
 
     return(headers, times, states)
 
-def interpolate(params):
+def interpolate(p):
     try:
-        return([list(ie.true_state) for ie in interpolate_ephemeris(*params)])
+        i0, i1 = bisect.bisect_left(p[1], p[0][1][0]), bisect.bisect_right(p[1], p[0][1][-1])
+        ixt = p[1][i0:i1]
+        ixs = [i.true_state[:] for i in interpolate_ephemeris(Frame.EME2000, p[0][1], p[0][2], 5, Frame.EME2000, ixt, 0.0, 0.0)]
     except Exception as exc:
+        ixt, ixs = [], []
         print(f"interpolate_ephemeris error: {exc}")
 
-    return(None)
+    return(ixt, ixs)
 
 def dir_or_file(param):
     if (os.path.isdir(param) or os.path.isfile(param)):
@@ -295,5 +313,10 @@ if (__name__ == "__main__"):
     pri_files = list_oem_files(getattr(arg, "primary-path"))
     sec_files = list_oem_files(getattr(arg, "secondary-path"))
 
+    start_time = datetime.utcnow()
+
     run_cas(pri_files, sec_files, output_path=arg.output_path, distance=arg.distance, radius=arg.radius, pos_sigma=arg.pos_sigma,
             vel_sigma=arg.vel_sigma, extra_keys=arg.extra_keys.split(","), window=arg.window)
+
+    tmin, tsec = divmod((datetime.utcnow() - start_time).total_seconds(), 60.0)
+    print(f"Elapsed time = {tmin:.0f} min {np.ceil(tsec):.0f} sec")

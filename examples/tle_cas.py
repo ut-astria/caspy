@@ -1,5 +1,5 @@
 # tle_cas.py - Screen TLEs for close approaches.
-# Copyright (C) 2022 University of Texas
+# Copyright (C) 2022-2023 University of Texas
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,6 +15,8 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import caspy
+from datetime import datetime
+from math import ceil
 import os
 
 if (__name__ == "__main__"):
@@ -34,6 +36,11 @@ if (__name__ == "__main__"):
                   "1 48680U 21044AU  22059.74267740 -.00000139  00000-0  95435-5 0  9997",
                   "2 48680  53.0554 230.4645 0001634  69.2317 290.8847 15.06401102 42291"]]
 
-    # Screen for approaches < 60 km and over a 24 hr time window
+    start_time = datetime.utcnow()
+
+    # Screen for approaches < 50 km and over a 24 hr time window
     # CDM files will be written to your home directory
-    caspy.run_tle_cas(primary, secondary, os.path.expanduser("~"), distance=60000.0, window=24.0)
+    caspy.run_tle_cas(primary, secondary, os.path.expanduser("~"), distance=50000.0, window=24.0)
+
+    tmin, tsec = divmod((datetime.utcnow() - start_time).total_seconds(), 60.0)
+    print(f"Elapsed time = {tmin:.0f} min {ceil(tsec):.0f} sec")
