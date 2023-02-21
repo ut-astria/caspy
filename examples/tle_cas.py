@@ -16,7 +16,6 @@
 
 import caspy
 from datetime import datetime
-from math import ceil
 import os
 
 if (__name__ == "__main__"):
@@ -43,4 +42,4 @@ if (__name__ == "__main__"):
     caspy.run_tle_cas(primary, secondary, os.path.expanduser("~"), distance=50000.0, window=24.0)
 
     tmin, tsec = divmod((datetime.utcnow() - start_time).total_seconds(), 60.0)
-    print(f"Elapsed time = {tmin:.0f} min {ceil(tsec):.0f} sec")
+    print(f"Elapsed time = {tmin:.0f} min {tsec:.0f} sec")

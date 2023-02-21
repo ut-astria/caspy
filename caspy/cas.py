@@ -44,28 +44,27 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
         multiprocessing.set_start_method("spawn")
     except Exception as _:
         pass
-    pool = multiprocessing.Pool(chunk_size, sms.init_process)
+    pool = multiprocessing.Pool(chunk_size, sms.init_process, (output_path, distance, radius, pos_sigma, vel_sigma, extra_keys, window))
 
-    eph_start, eph_stop = "0", "9"
-    unique = list(set(pri_files + sec_files))
-    oem_data = pool.map(import_oem, zip(unique, (extra_keys,)*len(unique), (window,)*len(unique)))
-    oem_cache = {unique[i]:d for i, d in enumerate(oem_data) if (d and len(d[2]) > 5)}
+    eph_start, eph_stop = 0.0, 1.0E12
+    all_files = list(set(pri_files + sec_files))
+    oem_data = pool.map(import_oem, all_files)
+    oem_cache = {all_files[i]:d for i, d in enumerate(oem_data) if (d and len(d[2]) > 5)}
 
     for prf in pri_files:
-        val = oem_cache[prf]
-        eph_start = max(val[0]["START_TIME"], eph_start)
-        eph_stop = min(val[0]["STOP_TIME"], eph_stop)
+        val = oem_cache.get(prf)
+        if (val):
+            eph_start = max(val[1][0], eph_start)
+            eph_stop = min(val[1][-1], eph_stop)
 
-    use_time = np.arange(*get_J2000_epoch_offset((eph_start, eph_stop)), 60.0).tolist()
-    inter_state = pool.map(interpolate, zip(oem_cache.values(), (use_time,)*len(oem_cache)))
-
+    inter_state = pool.map(interpolate, zip(oem_cache.values(), (eph_start,)*len(oem_cache), (eph_stop,)*len(oem_cache)))
     for oce, ixs in zip(oem_cache.values(), inter_state):
         oce[1], oce[2] = ixs
 
-    del unique
+    del all_files
     del oem_data
-    del use_time
     del inter_state
+    chunk_size *= 32
     done, pri_task, sec_task, mp_input, summary = set(), [], [], [], []
 
     for pri_idx, pri_file in enumerate(pri_files):
@@ -88,7 +87,7 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
 
                     pri_map = {"headers": pri[0], "states": pri[2][i0:i1], "covTime": pri[3], "cov": pri[4]}
                     sec_map = {"headers": sec[0], "states": sec[2], "covTime": sec[3], "cov": sec[4]}
-                    mp_input.append([pri_map, sec_map, ut, output_path, distance, pos_sigma, vel_sigma, radius])
+                    mp_input.append((pri_map, sec_map, ut))
 
                 if (mp_input):
                     for result in pool.imap_unordered(sms.screen_pair, mp_input):
@@ -116,7 +115,7 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
         multiprocessing.set_start_method("spawn")
     except Exception as _:
         pass
-    pool = multiprocessing.Pool(chunk_size, sms.init_process)
+    pool = multiprocessing.Pool(chunk_size, sms.init_process, (output_path, distance, radius, pos_sigma, vel_sigma, [], window))
 
     all_tles = pri_tles + sec_tles
     dt0 = datetime.strptime(all_tles[0][1][18:23], "%y%j").replace(tzinfo=timezone.utc) + timedelta(days=float(all_tles[0][1][23:32]))
@@ -127,6 +126,7 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
 
     del all_tles
     del tle_data
+    chunk_size *= 32
     done, pri_task, sec_task, mp_input, summary = set(), [], [], [], []
 
     for pri_idx, pri_tle in enumerate(pri_tles):
@@ -141,7 +141,7 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
                     pri, sec = tle_cache[pt[1]], tle_cache[st[1]]
                     pri_map = {"headers": pri[0], "states": pri[2], "covTime": [], "cov": []}
                     sec_map = {"headers": sec[0], "states": sec[2], "covTime": [], "cov": []}
-                    mp_input.append([pri_map, sec_map, pri[1], output_path, distance, pos_sigma, vel_sigma, radius])
+                    mp_input.append((pri_map, sec_map, pri[1]))
 
                 if (mp_input):
                     for result in pool.imap_unordered(sms.screen_pair, mp_input):
@@ -189,19 +189,18 @@ def basic_screen(pri, sec, start_utc, stop_utc, step):
 
     return(get_UTC_string(time), rel_pos, rel_speed)
 
-def import_oem(params):
+def import_oem(oem_file):
     try:
-        oem_file, extra_keys, window = params
         headers = {"EPHEMERIS_NAME": os.path.basename(oem_file)}
         times, states, cov_start, cov_times, cov, end_time = [], [], False, [], [], None
         with open(oem_file, "r") as fp:
-            lines = [l.strip() for l in fp.readlines() if (l.strip())]
+            lines = [l for l in fp.read().splitlines() if (l)]
 
         for idx, line in enumerate(lines):
             # Import extra key/value pairs from comment lines
             if (line.startswith("COMMENT")):
                 toks = line.split()
-                if (len(toks) > 2 and toks[1] in extra_keys):
+                if (len(toks) > 2 and toks[1] in sms._extra_keys):
                     headers.setdefault("extra", {})[toks[1]] = " ".join(toks[2:])
                 continue
 
@@ -232,11 +231,11 @@ def import_oem(params):
             if ("=" in line):
                 toks = [t.strip() for t in line.split("=")]
                 headers[toks[0]] = toks[1]
-            elif (line[0].isnumeric() and ":" in line):
+            elif (":" in line and line[0].isnumeric()):
                 toks = line.split()
                 if (not end_time):
                     prev_time = datetime.fromisoformat(toks[0]).replace(tzinfo=timezone.utc)
-                    end_time = (prev_time + timedelta(hours=window)).isoformat(timespec="milliseconds")
+                    end_time = (prev_time + timedelta(hours=sms._window)).isoformat(timespec="milliseconds")
 
                 curr_time = datetime.fromisoformat(toks[0]).replace(tzinfo=timezone.utc)
                 if ((len(times) == 0 or (curr_time - prev_time).total_seconds() >= 60.0) and toks[0] <= end_time):
@@ -250,6 +249,18 @@ def import_oem(params):
         return(None)
 
     return([headers, [times] if (isinstance(times, float)) else list(times), states, cov_times, cov])
+
+def interpolate(p):
+    try:
+        ut = np.arange(p[1], p[2], 60.0).tolist()
+        i0, i1 = bisect.bisect_left(ut, p[0][1][0]), bisect.bisect_right(ut, p[0][1][-1])
+        ixt = ut[i0:i1]
+        ixs = [i.true_state[:] for i in interpolate_ephemeris(Frame.EME2000, p[0][1], p[0][2], 5, Frame.EME2000, ixt, 0.0, 0.0)]
+    except Exception as exc:
+        ixt, ixs = [], []
+        print(f"interpolate_ephemeris error: {exc}")
+
+    return(ixt, ixs)
 
 def propagate_tle(params):
     try:
@@ -271,17 +282,6 @@ def propagate_tle(params):
         return(None)
 
     return(headers, times, states)
-
-def interpolate(p):
-    try:
-        i0, i1 = bisect.bisect_left(p[1], p[0][1][0]), bisect.bisect_right(p[1], p[0][1][-1])
-        ixt = p[1][i0:i1]
-        ixs = [i.true_state[:] for i in interpolate_ephemeris(Frame.EME2000, p[0][1], p[0][2], 5, Frame.EME2000, ixt, 0.0, 0.0)]
-    except Exception as exc:
-        ixt, ixs = [], []
-        print(f"interpolate_ephemeris error: {exc}")
-
-    return(ixt, ixs)
 
 def dir_or_file(param):
     if (os.path.isdir(param) or os.path.isfile(param)):
@@ -319,4 +319,4 @@ if (__name__ == "__main__"):
             vel_sigma=arg.vel_sigma, extra_keys=arg.extra_keys.split(","), window=arg.window)
 
     tmin, tsec = divmod((datetime.utcnow() - start_time).total_seconds(), 60.0)
-    print(f"Elapsed time = {tmin:.0f} min {np.ceil(tsec):.0f} sec")
+    print(f"Elapsed time = {tmin:.0f} min {tsec:.0f} sec")

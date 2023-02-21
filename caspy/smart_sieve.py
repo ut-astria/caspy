@@ -28,11 +28,12 @@ from os import getenv, path
 
 _MU_EARTH = 3.986004415E14
 
-def init_process():
-    global _cdm_template, _object_map
+def init_process(*params):
+    global _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window
+    _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window = params
 
-    _object_map = {}
-    _cdm_template = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm"))
+    global _cdm_template, _object_map
+    _cdm_template, _object_map = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm")), {}
 
     # Load UT object ID catalog if it exists
     try:
@@ -46,7 +47,7 @@ def init_process():
 
 def screen_pair(params):
     try:
-        object1, object2, times, out_dir, critical_dist, pos_sigma, vel_sigma, body_radius = params
+        object1, object2, times = params
         states1, states2 = object1["states"], object2["states"]
 
         # If the OEM file had a COSPAR ID then map it to a NORAD ID else leave it as is
@@ -58,7 +59,7 @@ def screen_pair(params):
             return(None)
 
         # Apogee/perigee filter
-        apsis_pass, rp1, rp2 = apogee_filter(states1[0], states2[0], times[1] - times[0], critical_dist)
+        apsis_pass, rp1, rp2 = apogee_filter(states1[0], states2[0], times[1] - times[0])
         if (not apsis_pass):
             return(None)
 
@@ -79,12 +80,12 @@ def screen_pair(params):
         states2.append(prop[1].array[1].true_state)
         states2.append(prop[1].array[2].true_state)
 
-        index, event_found, event_min_dist, summary = 2, False, critical_dist, []
+        index, event_found, event_min_dist, summary = 2, False, _critical_dist, []
 
         # Iterate through each time step
         while (index < len(times) - 2):
             # Run smart Sieve
-            sieve_pass, skip_index = sift(states1[index], states2[index], rp1, rp2, 180.0, critical_dist)
+            sieve_pass, skip_index = sift(states1[index], states2[index], rp1, rp2, 180.0)
             if (not sieve_pass):
                 index += skip_index
                 continue
@@ -95,7 +96,7 @@ def screen_pair(params):
             index += 1
 
             # If smart sieve passed, run binary search
-            tca_result = find_tca(inter_time, inter_state1, inter_state2, times[1] - times[0], critical_dist, rp1, rp2)
+            tca_result = find_tca(inter_time, inter_state1, inter_state2, times[1] - times[0], rp1, rp2)
             if (not tca_result):
                 continue
 
@@ -113,8 +114,8 @@ def screen_pair(params):
                 pos_obj2, vel_obj2 = state_ca2[:3], state_ca2[3:]
                 miss_dist = la.norm(np.subtract(pos_obj1, pos_obj2))
 
-                def_cov = [pos_sigma**2, 0, pos_sigma**2, 0, 0, pos_sigma**2, 0, 0, 0, vel_sigma**2,
-                           0, 0, 0, 0, vel_sigma**2, 0, 0, 0, 0, 0, vel_sigma**2]
+                def_cov = [_pos_sigma**2, 0, _pos_sigma**2, 0, 0, _pos_sigma**2, 0, 0, 0, _vel_sigma**2,
+                           0, 0, 0, 0, _vel_sigma**2, 0, 0, 0, 0, 0, _vel_sigma**2]
                 cov1 = np.array(ltr_to_matrix(get_covariance(object1, time_ca, def_cov)))
                 cov2 = np.array(ltr_to_matrix(get_covariance(object2, time_ca, def_cov)))
 
@@ -125,7 +126,7 @@ def screen_pair(params):
                 cov2_rtn = rot2_6x6.dot(cov2).dot(rot2_6x6.transpose())
                 rel_pos = rot1_3x3.dot(np.subtract(pos_obj2, pos_obj1))
                 rel_vel = rot1_3x3.dot(np.subtract(vel_obj2, vel_obj1))
-                coll_prob = compute_pc(state_ca1, state_ca2, cov1, cov2, body_radius)
+                coll_prob = compute_pc(state_ca1, state_ca2, cov1, cov2)
 
                 object1.update({"CREATION_DATE":datetime.now(timezone.utc).isoformat(timespec="milliseconds")[:-6], "TCA": ca_utc,
                                 "MISS_DISTANCE": miss_dist, "RELATIVE_SPEED": la.norm(np.subtract(vel_obj1, vel_obj2)),
@@ -148,12 +149,12 @@ def screen_pair(params):
                                 "CNDOT_R":cov2_rtn[5][0],"CNDOT_T":cov2_rtn[5][1],"CNDOT_N":cov2_rtn[5][2],"CNDOT_RDOT":cov2_rtn[5][3],
                                 "CNDOT_TDOT": cov2_rtn[5][4], "CNDOT_NDOT": cov2_rtn[5][5]})
 
-                cdm_file = path.join(out_dir, f"""{object1["headers"]["OBJECT_ID"]}_{object2["headers"]["OBJECT_ID"]}_"""
+                cdm_file = path.join(_output_path, f"""{object1["headers"]["OBJECT_ID"]}_{object2["headers"]["OBJECT_ID"]}_"""
                                      f"""{ca_utc[:19].replace("-", "").replace(":", "")}.cdm""")
                 with open(cdm_file, "w") as fp:
                     fp.write(_cdm_template.render(obj1=object1, obj2=object2))
 
-                event_min_dist, event_found = critical_dist, False
+                event_min_dist, event_found = _critical_dist, False
                 summary.append([object1["headers"]["EPHEMERIS_NAME"], object2["headers"]["EPHEMERIS_NAME"], cdm_file, ca_utc,
                                 miss_dist, object1["RELATIVE_SPEED"]])
     except Exception as exc:
@@ -171,13 +172,13 @@ def propagate(start_time, state1, state2, stop_time, step_size):
     return(propagate_orbits(cfg))
 
 # Run apogee/perigee filter based on critical distance
-def apogee_filter(s1, s2, delta, critical_dist):
+def apogee_filter(s1, s2, delta):
     pos1, vel1 = s1[:3], s1[3:]
     pos2, vel2 = s2[:3], s2[3:]
     r1, v1sq = la.norm(pos1), np.dot(vel1, vel1)
     r2, v2sq = la.norm(pos2), np.dot(vel2, vel2)
     esc_vel = np.sqrt(2.0*_MU_EARTH/min(r1, r2))
-    threshold = critical_dist + esc_vel*delta
+    threshold = _critical_dist + esc_vel*delta
 
     a1 = _MU_EARTH/(2*_MU_EARTH/r1 - v1sq)
     a2 = _MU_EARTH/(2*_MU_EARTH/r2 - v2sq)
@@ -196,16 +197,16 @@ def apogee_filter(s1, s2, delta, critical_dist):
         return(True, rp1, rp2)
 
 # Rodríguez, J. & Martínez, Francisco & Klinkrad, H.. “Collision Risk Assessment with a `Smart Sieve' Method”. (2002)
-def sift(s1, s2, rp1, rp2, delta, critical_dist):
+def sift(s1, s2, rp1, rp2, delta):
     rel_vec = [y - x for x, y in zip(s1, s2)]
     dist_vec, vel_vec = rel_vec[:3], rel_vec[3:]
     rel_dist, rel_vel = la.norm(dist_vec), la.norm(vel_vec)
-    threshold = critical_dist + np.sqrt(2*_MU_EARTH/min(la.norm(s1[:3]), la.norm(s2[:3])))*delta
+    threshold = _critical_dist + np.sqrt(2*_MU_EARTH/min(la.norm(s1[:3]), la.norm(s2[:3])))*delta
 
     if (rel_dist > threshold):
         return(False, max(1, int((rel_dist - threshold)/(delta*np.sqrt(_MU_EARTH*(1/rp1 + 1/rp2))))))
     else:
-        acc_threshold = critical_dist + 9.80665*delta**2
+        acc_threshold = _critical_dist + 9.80665*delta**2
         rminsq = rel_dist**2 - (np.dot(dist_vec, np.divide(vel_vec, rel_vel)))**2
         if (rminsq > acc_threshold**2):
             return(False, 1)
@@ -217,7 +218,7 @@ def sift(s1, s2, rp1, rp2, delta, critical_dist):
                 return(True, 0)
 
 # Function to find TCA using a binary search after the smart sieve process
-def find_tca(time, state1, state2, delta, critical_dist, rp1, rp2):
+def find_tca(time, state1, state2, delta, rp1, rp2):
     distance = la.norm(np.array(state2)[:,:3] - np.array(state1)[:,:3], axis=1)
     min_idx = np.argmin(distance)
     min_dist = distance[min_idx]
@@ -233,12 +234,12 @@ def find_tca(time, state1, state2, delta, critical_dist, rp1, rp2):
             inter_state2 = [ix.true_state for ix in interpolate_ephemeris(Frame.EME2000, time, state2, 5, Frame.EME2000, time[0], time[-1], delta)]
 
         for i in range(2, len(inter_time) - 2):
-            sieve_pass, _ = sift(inter_state1[i], inter_state2[i], rp1, rp2, delta, critical_dist)
+            sieve_pass, _ = sift(inter_state1[i], inter_state2[i], rp1, rp2, delta)
             if (sieve_pass):
                 t = [inter_time[i + j] for j in range(-2, 3)]
                 s1 = [inter_state1[i + j] for j in range(-2, 3)]
                 s2 = [inter_state2[i + j] for j in range(-2, 3)]
-                check = find_tca(t, s1, s2, delta/2.0, critical_dist, rp1, rp2)
+                check = find_tca(t, s1, s2, delta/2.0, rp1, rp2)
                 if (check and check[1] < min_dist):
                     tca, min_dist, state_ca1, state_ca2 = check
 
@@ -273,7 +274,7 @@ def get_covariance(obj, time, default):
     return(default)
 
 # Chan's Pc approximation, outlined in Alfano 2013
-def compute_pc(state1, state2, cov1, cov2, body_radius):
+def compute_pc(state1, state2, cov1, cov2):
     rel_state = np.subtract(state2, state1)
     Prel = np.add(cov1, cov2)[:3,:3]
 
@@ -286,7 +287,7 @@ def compute_pc(state1, state2, cov1, cov2, body_radius):
     xbar, ybar = v.transpose().dot(T.dot(rel_state[:3]))
     sigx, sigy = w
 
-    u1 = body_radius**2/(np.sqrt(sigx)*np.sqrt(sigy))
+    u1 = _body_radius**2/(np.sqrt(sigx)*np.sqrt(sigy))
     u2 = xbar**2/sigx + ybar**2/sigy
     pc = np.exp(-0.5*u2)*(1 - np.exp(-0.5*u1) + 0.5*u2*(1 - np.exp(-0.5*u1)*(1 + 0.5*u1)))
 
