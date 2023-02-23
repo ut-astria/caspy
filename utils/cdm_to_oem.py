@@ -74,8 +74,8 @@ def convert(fname):
         epoch = get_J2000_epoch_offset(cdm["COMMON"]["TCA"])
         state1, state2 = state(obj1), state(obj2)
 
-        _  , prop_rev = propagate(epoch, state1, state2, epoch - 3.0, -0.5)
-        cfg, prop_fwd = propagate(epoch, state1, state2, epoch + 3.0, +0.5)
+        _  , prop_rev = propagate(epoch, state1, state2, epoch - 300.0, -60.0)
+        cfg, prop_fwd = propagate(epoch, state1, state2, epoch + 300.0, +60.0)
 
         output1, output2 = [], []
         for i in range(len(prop_rev[0].array) - 1, -1, -1):

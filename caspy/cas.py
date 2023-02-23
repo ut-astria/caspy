@@ -46,7 +46,7 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
         pass
     pool = multiprocessing.Pool(chunk_size, sms.init_process, (output_path, distance, radius, pos_sigma, vel_sigma, extra_keys, window))
 
-    eph_start, eph_stop = 0.0, 1.0E12
+    eph_start, eph_stop = 1.0E12, -1.0E12
     all_files = list(set(pri_files + sec_files))
     oem_data = pool.map(import_oem, all_files)
     oem_cache = {all_files[i]:d for i, d in enumerate(oem_data) if (d and len(d[2]) > 5)}
@@ -54,8 +54,8 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
     for prf in pri_files:
         val = oem_cache.get(prf)
         if (val):
-            eph_start = max(val[1][0], eph_start)
-            eph_stop = min(val[1][-1], eph_stop)
+            eph_start = min(val[1][0], eph_start)
+            eph_stop = max(val[1][-1], eph_stop)
 
     inter_state = pool.map(interpolate, zip(oem_cache.values(), (eph_start,)*len(oem_cache), (eph_stop,)*len(oem_cache)))
     for oce, ixs in zip(oem_cache.values(), inter_state):
@@ -222,7 +222,7 @@ def import_oem(oem_file):
                         cov_times.append(ctime)
                         for i in range(idx + 1, len(lines)):
                             if not ("=" in lines[i] or lines[i].startswith("COMMENT")):
-                                cov[-1].extend(float(t)*1E6 for t in lines[i].split())
+                                cov[-1].extend(float(t)*1.0E6 for t in lines[i].split())
                             if (len(cov[-1]) == 21):
                                 break
                 continue
@@ -238,7 +238,7 @@ def import_oem(oem_file):
                     end_time = (prev_time + timedelta(hours=sms._window)).isoformat(timespec="milliseconds")
 
                 curr_time = datetime.fromisoformat(toks[0]).replace(tzinfo=timezone.utc)
-                if ((len(times) == 0 or (curr_time - prev_time).total_seconds() >= 60.0) and toks[0] <= end_time):
+                if ((len(times) == 0 or (curr_time - prev_time).total_seconds() >= 59.0) and toks[0] <= end_time):
                     prev_time = curr_time
                     times.append(toks[0])
                     states.append([float(t)*1000.0 for t in toks[1:]])
@@ -286,6 +286,7 @@ def propagate_tle(params):
 def dir_or_file(param):
     if (os.path.isdir(param) or os.path.isfile(param)):
         return(param)
+
     raise(argparse.ArgumentTypeError(f"{param} is not a valid directory or file"))
 
 def list_oem_files(path_or_file):
@@ -319,4 +320,4 @@ if (__name__ == "__main__"):
             vel_sigma=arg.vel_sigma, extra_keys=arg.extra_keys.split(","), window=arg.window)
 
     tmin, tsec = divmod((datetime.utcnow() - start_time).total_seconds(), 60.0)
-    print(f"Elapsed time = {tmin:.0f} min {tsec:.0f} sec")
+    print(f"Elapsed time = {tmin:.0f} min {tsec:.1f} sec")
