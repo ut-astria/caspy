@@ -39,7 +39,7 @@ if (__name__ == "__main__"):
 
     # Screen for approaches < 50 km over a 24 hr time window
     # CDM files will be written to your home directory
-    caspy.run_tle_cas(primary, secondary, os.path.expanduser("~"), distance=50.0E3, window=24.0)
+    caspy.run_tle_cas(primary, secondary, os.path.expanduser("~"), distance=50.0E3, window=24.0, cache_data=True)
 
     tmin, tsec = divmod((datetime.utcnow() - start_time).total_seconds(), 60.0)
     print(f"Elapsed time = {tmin:.0f} min {tsec:.1f} sec")

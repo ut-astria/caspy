@@ -33,7 +33,7 @@ else:
     import smart_sieve as sms
 
 def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0, pos_sigma=1000.0, vel_sigma=0.1,
-            extra_keys=[], window=24.0, chunk_size=os.cpu_count()):
+            extra_keys=[], window=24.0, cache_data=False):
 
     pri_files = list(os.path.realpath(os.path.expanduser(f)) for f in pri_files)
     pri_files.sort()
@@ -44,28 +44,30 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
         multiprocessing.set_start_method("spawn")
     except Exception as _:
         pass
+
+    chunk_size, done, pri_task, sec_task, mp_input, summary = os.cpu_count(), set(), [], [], [], []
     pool = multiprocessing.Pool(chunk_size, sms.init_process, (output_path, distance, radius, pos_sigma, vel_sigma, extra_keys, window))
 
-    eph_start, eph_stop = 1.0E12, -1.0E12
-    all_files = list(set(pri_files + sec_files))
-    oem_data = pool.map(import_oem, all_files)
-    oem_cache = {all_files[i]:d for i, d in enumerate(oem_data) if (d and len(d[2]) > 5)}
+    def build_cache(files1, files2):
+        eph_start, eph_stop = 1.0E12, -1.0E12
+        all_files = list(set(files1 + files2))
+        oem_data = pool.map(import_oem, all_files)
+        oem_cache = {all_files[i]:d for i, d in enumerate(oem_data) if (d and len(d[2]) > 5)}
 
-    for prf in pri_files:
-        val = oem_cache.get(prf)
-        if (val):
-            eph_start = min(val[1][0], eph_start)
-            eph_stop = max(val[1][-1], eph_stop)
+        for f1 in files1:
+            val = oem_cache.get(f1)
+            if (val):
+                eph_start = min(val[1][0], eph_start)
+                eph_stop = max(val[1][-1], eph_stop)
 
-    inter_state = pool.map(interpolate, zip(oem_cache.values(), (eph_start,)*len(oem_cache), (eph_stop,)*len(oem_cache)))
-    for oce, ixs in zip(oem_cache.values(), inter_state):
-        oce[1], oce[2] = ixs
+        inter_state = pool.map(interpolate, zip(oem_cache.values(), (eph_start,)*len(oem_cache), (eph_stop,)*len(oem_cache)))
+        for oc, ix in zip(oem_cache.values(), inter_state):
+            oc[1], oc[2] = ix
 
-    del all_files
-    del oem_data
-    del inter_state
-    chunk_size *= 32
-    done, pri_task, sec_task, mp_input, summary = set(), [], [], [], []
+        return(oem_cache)
+
+    if (cache_data):
+        oem_cache = build_cache(pri_files, sec_files)
 
     for pri_idx, pri_file in enumerate(pri_files):
         done.add(pri_file)
@@ -75,18 +77,23 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
                 sec_task.append(sec_file)
 
             if (len(pri_task) == chunk_size or (pri_task and pri_idx == len(pri_files) - 1 and sec_idx == len(sec_files) - 1)):
+                if (not cache_data):
+                    oem_cache = build_cache(pri_task, sec_task)
+
                 for pt, st in zip(pri_task, sec_task):
                     pri, sec = oem_cache[pt], oem_cache[st]
                     if (not (pri[1] and pri[2] and sec[1] and sec[2])):
                         continue
 
-                    i0, i1 = bisect.bisect_left(pri[1], sec[1][0]), bisect.bisect_right(pri[1], sec[1][-1])
-                    ut = pri[1][i0:i1]
+                    lb, ub = max(pri[1][0], sec[1][0]), min(pri[1][-1], sec[1][-1])
+                    p0, p1 = bisect.bisect_left(pri[1], lb), bisect.bisect_right(pri[1], ub)
+                    s0, s1 = bisect.bisect_left(sec[1], lb), bisect.bisect_right(sec[1], ub)
+                    ut = pri[1][p0:p1]
                     if (len(ut) <= 5):
                         continue
 
-                    pri_map = {"headers": pri[0], "states": pri[2][i0:i1], "covTime": pri[3], "cov": pri[4]}
-                    sec_map = {"headers": sec[0], "states": sec[2], "covTime": sec[3], "cov": sec[4]}
+                    pri_map = {"headers": pri[0], "states": pri[2][p0:p1], "covTime": pri[3], "cov": pri[4]}
+                    sec_map = {"headers": sec[0], "states": sec[2][s0:s1], "covTime": sec[3], "cov": sec[4]}
                     mp_input.append((pri_map, sec_map, ut))
 
                 if (mp_input):
@@ -106,7 +113,7 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
             fp.write(",".join(str(s) for s in entry) + "\n")
 
 def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.0, pos_sigma=1000.0, vel_sigma=0.1,
-                window=24.0, chunk_size=os.cpu_count()):
+                window=24.0, cache_data=False):
 
     pri_tles = sorted(pri_tles, key=lambda k:int(k[1][2:7].strip()))
     sec_tles = sorted(sec_tles, key=lambda k:int(k[1][2:7].strip()))
@@ -115,19 +122,20 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
         multiprocessing.set_start_method("spawn")
     except Exception as _:
         pass
+
+    chunk_size, done, pri_task, sec_task, mp_input, summary = os.cpu_count(), set(), [], [], [], []
     pool = multiprocessing.Pool(chunk_size, sms.init_process, (output_path, distance, radius, pos_sigma, vel_sigma, [], window))
 
-    all_tles = pri_tles + sec_tles
-    dt0 = datetime.strptime(all_tles[0][1][18:23], "%y%j").replace(tzinfo=timezone.utc) + timedelta(days=float(all_tles[0][1][23:32]))
-    t0, t1 = dt0.isoformat(), (dt0 + timedelta(hours=window)).isoformat()
+    def build_cache(tle1, tle2):
+        all_tles = tle1 + tle2
+        dt0 = datetime.strptime(all_tles[0][1][18:23], "%y%j").replace(tzinfo=timezone.utc) + timedelta(days=float(all_tles[0][1][23:32]))
+        t0, t1 = dt0.isoformat(), (dt0 + timedelta(hours=window)).isoformat()
 
-    tle_data = pool.map(propagate_tle, zip(all_tles, (t0,)*len(all_tles), (t1,)*len(all_tles)))
-    tle_cache = {all_tles[i][1]:d for i, d in enumerate(tle_data) if (d and len(d[2]) > 5)}
+        tle_data = pool.map(propagate_tle, zip(all_tles, (t0,)*len(all_tles), (t1,)*len(all_tles)))
+        return({all_tles[i][1]:d for i, d in enumerate(tle_data) if (d and len(d[2]) > 5)})
 
-    del all_tles
-    del tle_data
-    chunk_size *= 32
-    done, pri_task, sec_task, mp_input, summary = set(), [], [], [], []
+    if (cache_data):
+        tle_cache = build_cache(pri_tles, sec_tles)
 
     for pri_idx, pri_tle in enumerate(pri_tles):
         done.add(pri_tle[1])
@@ -137,6 +145,9 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
                 sec_task.append(sec_tle)
 
             if (len(pri_task) == chunk_size or (pri_task and pri_idx == len(pri_tles) - 1 and sec_idx == len(sec_tles) - 1)):
+                if (not cache_data):
+                    tle_cache = build_cache(pri_task, sec_task)
+
                 for pt, st in zip(pri_task, sec_task):
                     pri, sec = tle_cache[pt[1]], tle_cache[st[1]]
                     pri_map = {"headers": pri[0], "states": pri[2], "covTime": [], "cov": []}
@@ -306,18 +317,19 @@ if (__name__ == "__main__"):
     parser.add_argument("-v", "--vel-sigma", help="Default velocity one-sigma [m/s]", type=float, default=0.1)
     parser.add_argument("-e", "--extra-keys", help="Extra COMMENT key/value data to copy", type=str, default="")
     parser.add_argument("-w", "--window", help="Screening time window [hr]", type=float, default=24.0)
+    parser.add_argument("-c", "--cache-data", help="Cache all ephemeris data in memory for speed", action="store_true", default=False)
+
     if (len(sys.argv) == 1):
         parser.print_help()
         exit(1)
 
+    start_time = datetime.utcnow()
     arg = parser.parse_args()
     pri_files = list_oem_files(getattr(arg, "primary-path"))
     sec_files = list_oem_files(getattr(arg, "secondary-path"))
 
-    start_time = datetime.utcnow()
-
     run_cas(pri_files, sec_files, output_path=arg.output_path, distance=arg.distance, radius=arg.radius, pos_sigma=arg.pos_sigma,
-            vel_sigma=arg.vel_sigma, extra_keys=arg.extra_keys.split(","), window=arg.window)
+            vel_sigma=arg.vel_sigma, extra_keys=arg.extra_keys.split(","), window=arg.window, cache_data=arg.cache_data)
 
     tmin, tsec = divmod((datetime.utcnow() - start_time).total_seconds(), 60.0)
     print(f"Elapsed time = {tmin:.0f} min {tsec:.1f} sec")
