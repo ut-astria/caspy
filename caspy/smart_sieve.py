@@ -32,8 +32,10 @@ def init_process(*params):
     global _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window
     _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window = params
 
-    global _cdm_template, _object_map
+    global _cdm_template, _object_map, _debug_mode, _debug_data
     _cdm_template, _object_map = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm")), {}
+
+    _debug_mode = getenv("CASPY_DEBUG", "0") == "1"
 
     # Load UT object ID catalog if it exists
     try:
@@ -46,6 +48,9 @@ def init_process(*params):
         pass
 
 def screen_pair(params):
+    global _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window
+    global _cdm_template, _object_map, _debug_mode, _debug_data
+
     try:
         object1, object2, times = params
         states1, states2 = object1["states"], object2["states"]
@@ -82,6 +87,9 @@ def screen_pair(params):
 
         index, event_found, event_min_dist, summary = 2, False, _critical_dist, []
 
+        if (_debug_mode):
+            _debug_data = {}
+
         # Iterate through each time step
         while (index < len(times) - 2):
             # Run smart Sieve
@@ -107,7 +115,7 @@ def screen_pair(params):
 
             # If event has just ended
             if (event_found and (tca_result[1] >= event_min_dist or index == len(times) - 2)):
-                ca_utc = get_UTC_string(time_ca)
+                ca_utc = get_UTC_string(time_ca, precision=6)
                 screen_start, screen_stop = get_UTC_string((times[2], times[-3]))
 
                 pos_obj1, vel_obj1 = state_ca1[:3], state_ca1[3:]
@@ -157,6 +165,12 @@ def screen_pair(params):
                 event_min_dist, event_found = _critical_dist, False
                 summary.append([object1["headers"]["EPHEMERIS_NAME"], object2["headers"]["EPHEMERIS_NAME"], cdm_file, ca_utc,
                                 miss_dist, object1["RELATIVE_SPEED"]])
+
+                if (_debug_mode):
+                    with open(cdm_file.replace(".cdm", "_debug.json"), "w") as fp:
+                        json.dump(_debug_data, fp, indent=2)
+                    _debug_data = {}
+
     except Exception as exc:
         print(f"""Error {object1["headers"]["EPHEMERIS_NAME"]}, {object2["headers"]["EPHEMERIS_NAME"]}: {exc}""")
         return(None)
@@ -219,6 +233,8 @@ def sift(s1, s2, rp1, rp2, delta):
 
 # Function to find TCA using a binary search after the smart sieve process
 def find_tca(time, state1, state2, delta, rp1, rp2):
+    global _debug_mode, _debug_data
+
     distance = la.norm(np.array(state2)[:,:3] - np.array(state1)[:,:3], axis=1)
     min_idx = np.argmin(distance)
     min_dist = distance[min_idx]
@@ -242,6 +258,11 @@ def find_tca(time, state1, state2, delta, rp1, rp2):
                 check = find_tca(t, s1, s2, delta/2.0, rp1, rp2)
                 if (check and check[1] < min_dist):
                     tca, min_dist, state_ca1, state_ca2 = check
+
+                    if (_debug_mode):
+                        _debug_data = {"times": get_UTC_string(t, precision=6), "primaryStates": s1, "secondaryStates": s2,
+                                       "tca": get_UTC_string(tca, precision=6), "primaryAtTca": list(state_ca1),
+                                       "secondaryAtTca": list(state_ca2), "missDistance": min_dist}
 
         return(tca, min_dist, state_ca1, state_ca2)
 

@@ -112,6 +112,8 @@ def run_cas(pri_files, sec_files, output_path=".", distance=5000.0, radius=15.0,
         for entry in summary:
             fp.write(",".join(str(s) for s in entry) + "\n")
 
+    return(summary)
+
 def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.0, pos_sigma=1000.0, vel_sigma=0.1,
                 window=24.0, cache_data=False):
 
@@ -164,41 +166,36 @@ def run_tle_cas(pri_tles, sec_tles, output_path=".", distance=5000.0, radius=15.
                 mp_input.clear()
 
     pool.close()
-    summary.sort(key=lambda s: s[4])
-    with open(os.path.join(output_path, f"""tle_ca_{datetime.now().strftime("%Y%m%dT%H%M%S")}.txt"""), "w") as fp:
+
+    with open(os.path.join(output_path, f"""ca_{datetime.now().strftime("%Y%m%dT%H%M%S")}.txt"""), "w") as fp:
+        summary.sort(key=lambda s: s[4])
         for entry in summary:
             fp.write(",".join(str(s) for s in entry) + "\n")
 
-def basic_screen(pri, sec, start_utc, stop_utc, step):
-    time, rel_pos, rel_speed = [], [], []
-    t0, t1 = get_J2000_epoch_offset((start_utc, stop_utc))
-    norm = lambda x, y: np.sqrt((x[0] - y[0])**2 + (x[1] - y[1])**2 + (x[2] - y[2])**2)
+    return(summary)
+
+def basic_screen(pri, sec, start_utc, stop_utc):
+    try:
+        multiprocessing.set_start_method("spawn")
+    except Exception as _:
+        pass
+
+    pool = multiprocessing.Pool(2, sms.init_process, (None, None, None, None, None, [], 366*24))
 
     if (isinstance(pri, str) and os.path.isfile(pri) and isinstance(sec, str) and os.path.isfile(sec)):
-        _, toem, soem, _, _ = import_oem((pri, [], 24*366))
-        int1 = interpolate_ephemeris(Frame.EME2000, toem, soem, 5, Frame.EME2000, t0, t1, step)
-
-        _, toem, soem, _, _ = import_oem((sec, [], 24*366))
-        int2 = interpolate_ephemeris(Frame.EME2000, toem, soem, 5, Frame.EME2000, t0, t1, step)
-        for p1, p2 in zip(int1, int2):
-            time.append(p1.time)
-            rel_pos.append(norm(p1.true_state[:3], p2.true_state[:3]))
-            rel_speed.append(norm(p1.true_state[3:6], p2.true_state[3:6]))
+        t0, t1 = get_J2000_epoch_offset((start_utc, stop_utc))
+        oem_data = pool.map(import_oem, (pri, sec))
+        interp = pool.map(interpolate, zip(oem_data, (t0, t0), (t1, t1)))
+        results = zip(interp[0][0], interp[0][1], interp[1][1])
     else:
-        config = [configure(prop_initial_TLE=pri[1:], prop_start=t0, prop_step=step, prop_end=t1, prop_inertial_frame=Frame.EME2000,
-                            gravity_degree=-1, gravity_order=-1, ocean_tides_degree=-1, ocean_tides_order=-1, third_body_sun=False,
-                            third_body_moon=False, solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False),
-                  configure(prop_initial_TLE=sec[1:], prop_start=t0, prop_step=step, prop_end=t1, prop_inertial_frame=Frame.EME2000,
-                            gravity_degree=-1, gravity_order=-1, ocean_tides_degree=-1, ocean_tides_order=-1, third_body_sun=False,
-                            third_body_moon=False, solid_tides_sun=False, solid_tides_moon=False, drag_model=DragModel.UNDEFINED, rp_sun=False)]
+        prop = pool.map(propagate_tle, zip((pri, sec), (start_utc, start_utc), (stop_utc, stop_utc)))
+        results = zip(prop[0][1], prop[0][2], prop[1][2])
 
-        prop = propagate_orbits(config)
-        for p1, p2 in zip(prop[0].array, prop[1].array):
-            time.append(p1.time)
-            rel_pos.append(norm(p1.true_state[:3], p2.true_state[:3]))
-            rel_speed.append(norm(p1.true_state[3:6], p2.true_state[3:6]))
+    pool.close()
+    norm = lambda x, y: (np.sqrt((x[0] - y[0])**2 + (x[1] - y[1])**2 + (x[2] - y[2])**2),
+                         np.sqrt((x[3] - y[3])**2 + (x[4] - y[4])**2 + (x[5] - y[5])**2))
 
-    return(get_UTC_string(time), rel_pos, rel_speed)
+    return([[get_UTC_string(t, precision=6), s1, s2, *norm(s1, s2)] for t, s1, s2 in results])
 
 def import_oem(oem_file):
     try:
@@ -263,9 +260,16 @@ def import_oem(oem_file):
 
 def interpolate(p):
     try:
-        ut = np.arange(p[1], p[2], 60.0).tolist()
+        if (p[2] - p[1] > 1.0E-6):
+            ut = np.arange(p[1], p[2], 60.0).tolist()
+            if (ut[-1] != p[2]):
+                ut.append(p[2])
+        else:
+            ut = [p[2]]
+
         i0, i1 = bisect.bisect_left(ut, p[0][1][0]), bisect.bisect_right(ut, p[0][1][-1])
         ixt = ut[i0:i1]
+
         ixs = [i.true_state[:] for i in interpolate_ephemeris(Frame.EME2000, p[0][1], p[0][2], 5, Frame.EME2000, ixt, 0.0, 0.0)]
     except Exception as exc:
         ixt, ixs = [], []
