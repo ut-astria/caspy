@@ -167,6 +167,7 @@ def screen_pair(params):
                                 miss_dist, object1["RELATIVE_SPEED"]])
 
                 if (_debug_mode):
+                    del _debug_data["delta"]
                     with open(cdm_file.replace(".cdm", "_debug.json"), "w") as fp:
                         json.dump(_debug_data, fp, indent=2)
                     _debug_data = {}
@@ -251,18 +252,21 @@ def find_tca(time, state1, state2, delta, rp1, rp2):
 
         for i in range(2, len(inter_time) - 2):
             sieve_pass, _ = sift(inter_state1[i], inter_state2[i], rp1, rp2, delta)
+
             if (sieve_pass):
                 t = [inter_time[i + j] for j in range(-2, 3)]
                 s1 = [inter_state1[i + j] for j in range(-2, 3)]
                 s2 = [inter_state2[i + j] for j in range(-2, 3)]
                 check = find_tca(t, s1, s2, delta/2.0, rp1, rp2)
+
                 if (check and check[1] < min_dist):
                     tca, min_dist, state_ca1, state_ca2 = check
 
-                    if (_debug_mode):
-                        _debug_data = {"times": get_UTC_string(t, precision=6), "primaryStates": s1, "secondaryStates": s2,
-                                       "tca": get_UTC_string(tca, precision=6), "primaryAtTca": list(state_ca1),
-                                       "secondaryAtTca": list(state_ca2), "missDistance": min_dist}
+                    if (_debug_mode and delta < _debug_data.get("delta", 86400.0)):
+                        _debug_data = {"times": get_UTC_string(t, precision=6), "primaryStates": [list(s) for s in s1],
+                                       "secondaryStates": [list(s) for s in s2], "tca": get_UTC_string(tca, precision=6),
+                                       "primaryAtTca": list(state_ca1), "secondaryAtTca": list(state_ca2),
+                                       "missDistance": min_dist, "delta": delta}
 
         return(tca, min_dist, state_ca1, state_ca2)
 
