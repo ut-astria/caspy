@@ -246,7 +246,7 @@ def import_oem(oem_file):
                     end_time = (prev_time + timedelta(hours=sms._window)).isoformat(timespec="milliseconds")
 
                 curr_time = datetime.fromisoformat(toks[0]).replace(tzinfo=timezone.utc)
-                if ((len(times) == 0 or (curr_time - prev_time).total_seconds() >= 59.0) and toks[0] <= end_time):
+                if ((len(times) == 0 or (curr_time - prev_time).total_seconds() >= sms._min_data_gap) and toks[0] <= end_time):
                     prev_time = curr_time
                     times.append(toks[0])
                     states.append([float(t)*1000.0 for t in toks[1:]])

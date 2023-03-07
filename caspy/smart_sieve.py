@@ -32,10 +32,11 @@ def init_process(*params):
     global _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window
     _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window = params
 
-    global _cdm_template, _object_map, _debug_mode, _debug_data
+    global _cdm_template, _object_map, _debug_mode, _debug_data, _min_data_gap
     _cdm_template, _object_map = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm")), {}
 
     _debug_mode = getenv("CASPY_DEBUG", "0") == "1"
+    _min_data_gap = float(getenv("CASPY_MIN_DATA_GAP", "59.0"))
 
     # Load UT object ID catalog if it exists
     try:
