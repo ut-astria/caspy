@@ -32,11 +32,10 @@ def init_process(*params):
     global _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window
     _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window = params
 
-    global _cdm_template, _object_map, _debug_mode, _debug_data, _min_data_gap
+    global _cdm_template, _object_map, _debug_mode, _debug_data
     _cdm_template, _object_map = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm")), {}
 
     _debug_mode = getenv("CASPY_DEBUG", "0") == "1"
-    _min_data_gap = float(getenv("CASPY_MIN_DATA_GAP", "59.0"))
 
     # Load UT object ID catalog if it exists
     try:
@@ -168,7 +167,6 @@ def screen_pair(params):
                                 miss_dist, object1["RELATIVE_SPEED"]])
 
                 if (_debug_mode):
-                    del _debug_data["delta"]
                     with open(cdm_file.replace(".cdm", "_debug.json"), "w") as fp:
                         json.dump(_debug_data, fp, indent=2)
                     _debug_data = {}
@@ -246,10 +244,11 @@ def find_tca(time, state1, state2, delta, rp1, rp2):
         if (delta == time[1] - time[0]):
             inter_time, inter_state1, inter_state2 = time, state1, state2
         else:
-            inter = interpolate_ephemeris(Frame.EME2000, time, state1, 5, Frame.EME2000, time[0], time[-1], delta)
+            inter = interpolate_ephemeris(Frame.EME2000, time, state1, 3, Frame.EME2000, time[0], time[-1], delta, interp_method=1)
             inter_time = [ix.time for ix in inter]
             inter_state1 = [ix.true_state for ix in inter]
-            inter_state2 = [ix.true_state for ix in interpolate_ephemeris(Frame.EME2000, time, state2, 5, Frame.EME2000, time[0], time[-1], delta)]
+            inter_state2 = [ix.true_state for ix in
+                            interpolate_ephemeris(Frame.EME2000, time, state2, 3, Frame.EME2000, time[0], time[-1], delta, interp_method=1)]
 
         for i in range(2, len(inter_time) - 2):
             sieve_pass, _ = sift(inter_state1[i], inter_state2[i], rp1, rp2, delta)
@@ -263,11 +262,10 @@ def find_tca(time, state1, state2, delta, rp1, rp2):
                 if (check and check[1] < min_dist):
                     tca, min_dist, state_ca1, state_ca2 = check
 
-                    if (_debug_mode and delta < _debug_data.get("delta", 86400.0)):
+                    if (_debug_mode):
                         _debug_data = {"times": get_UTC_string(t, precision=6), "primaryStates": [list(s) for s in s1],
                                        "secondaryStates": [list(s) for s in s2], "tca": get_UTC_string(tca, precision=6),
-                                       "primaryAtTca": list(state_ca1), "secondaryAtTca": list(state_ca2),
-                                       "missDistance": min_dist, "delta": delta}
+                                       "primaryAtTca": list(state_ca1), "secondaryAtTca": list(state_ca2), "missDistance": min_dist}
 
         return(tca, min_dist, state_ca1, state_ca2)
 

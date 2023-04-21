@@ -242,12 +242,11 @@ def import_oem(oem_file):
             elif (":" in line and line[0].isnumeric()):
                 toks = line.split()
                 if (not end_time):
-                    prev_time = datetime.fromisoformat(toks[0]).replace(tzinfo=timezone.utc)
-                    end_time = (prev_time + timedelta(hours=sms._window)).isoformat(timespec="milliseconds")
+                    end_time = (datetime.fromisoformat(toks[0]).replace(tzinfo=timezone.utc) +
+                                timedelta(hours=sms._window)).isoformat(timespec="milliseconds")
 
                 curr_time = datetime.fromisoformat(toks[0]).replace(tzinfo=timezone.utc)
-                if ((len(times) == 0 or (curr_time - prev_time).total_seconds() >= sms._min_data_gap) and toks[0] <= end_time):
-                    prev_time = curr_time
+                if (toks[0] <= end_time):
                     times.append(toks[0])
                     states.append([float(t)*1000.0 for t in toks[1:]])
 
@@ -270,7 +269,7 @@ def interpolate(p):
         i0, i1 = bisect.bisect_left(ut, p[0][1][0]), bisect.bisect_right(ut, p[0][1][-1])
         ixt = ut[i0:i1]
 
-        ixs = [i.true_state[:] for i in interpolate_ephemeris(Frame.EME2000, p[0][1], p[0][2], 5, Frame.EME2000, ixt, 0.0, 0.0)]
+        ixs = [i.true_state[:] for i in interpolate_ephemeris(Frame.EME2000, p[0][1], p[0][2], 3, Frame.EME2000, ixt, 0.0, 0.0, interp_method=1)]
     except Exception as exc:
         ixt, ixs = [], []
         print(f"interpolate_ephemeris error: {exc}")
