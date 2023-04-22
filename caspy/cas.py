@@ -269,7 +269,7 @@ def interpolate(p):
         i0, i1 = bisect.bisect_left(ut, p[0][1][0]), bisect.bisect_right(ut, p[0][1][-1])
         ixt = ut[i0:i1]
 
-        ixs = [i.true_state[:] for i in interpolate_ephemeris(Frame.EME2000, p[0][1], p[0][2], 3, Frame.EME2000, ixt, 0.0, 0.0, interp_method=1)]
+        ixs = [i.true_state[:] for i in interpolate_ephemeris(Frame.EME2000, p[0][1], p[0][2], Frame.EME2000, ixt, 0.0, 0.0, interp_method=1)]
     except Exception as exc:
         ixt, ixs = [], []
         print(f"interpolate_ephemeris error: {exc}")

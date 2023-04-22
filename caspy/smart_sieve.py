@@ -244,11 +244,11 @@ def find_tca(time, state1, state2, delta, rp1, rp2):
         if (delta == time[1] - time[0]):
             inter_time, inter_state1, inter_state2 = time, state1, state2
         else:
-            inter = interpolate_ephemeris(Frame.EME2000, time, state1, 3, Frame.EME2000, time[0], time[-1], delta, interp_method=1)
+            inter = interpolate_ephemeris(Frame.EME2000, time, state1, Frame.EME2000, time[0], time[-1], delta, interp_method=1)
             inter_time = [ix.time for ix in inter]
             inter_state1 = [ix.true_state for ix in inter]
             inter_state2 = [ix.true_state for ix in
-                            interpolate_ephemeris(Frame.EME2000, time, state2, 3, Frame.EME2000, time[0], time[-1], delta, interp_method=1)]
+                            interpolate_ephemeris(Frame.EME2000, time, state2, Frame.EME2000, time[0], time[-1], delta, interp_method=1)]
 
         for i in range(2, len(inter_time) - 2):
             sieve_pass, _ = sift(inter_state1[i], inter_state2[i], rp1, rp2, delta)
