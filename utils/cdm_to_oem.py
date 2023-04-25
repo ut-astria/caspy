@@ -57,18 +57,20 @@ def convert(fname):
         cdm, key = {}, "COMMON"
         with open(fname, "r") as fp:
             for line in fp.read().splitlines():
-                tok = [t.strip() for t in line.split("=")]
+                line = line.strip()
+                if (len(line) > 0 and not line.startswith("COMMENT")):
+                    tok = [t.strip() for t in line.split("=")]
+                    if (len(tok) >= 2):
+                        if (tok[0] == "OBJECT" and tok[1] in ("OBJECT1", "OBJECT2")):
+                            key = tok[1]
+                            continue
 
-                if (tok[0] == "OBJECT" and tok[1] in ("OBJECT1", "OBJECT2")):
-                    key = tok[1]
-                    continue
+                        if ("[" in tok[1] and tok[1][-1] == "]"):
+                            tok[1] = float(tok[1].split("[")[0])
+                            if (tok[0] in ("X", "Y", "Z", "X_DOT", "Y_DOT", "Z_DOT")):
+                                tok[1] *= 1000.0
 
-                if ("[" in tok[1] and tok[1][-1] == "]"):
-                    tok[1] = float(tok[1].split("[")[0])
-                    if (tok[0] in ("X", "Y", "Z", "X_DOT", "Y_DOT", "Z_DOT")):
-                        tok[1] *= 1000.0
-
-                cdm.setdefault(key, {})[tok[0]] = tok[1]
+                        cdm.setdefault(key, {})[tok[0]] = tok[1]
 
         obj1, obj2 = cdm["OBJECT1"], cdm["OBJECT2"]
         epoch = get_J2000_epoch_offset(cdm["COMMON"]["TCA"])
@@ -89,12 +91,12 @@ def convert(fname):
             output1.append(EstimationOutput(time=prop_fwd[0].array[i].time, estimated_state=prop_fwd[0].array[i].true_state))
             output2.append(EstimationOutput(time=prop_fwd[1].array[i].time, estimated_state=prop_fwd[1].array[i].true_state))
 
-        out_dir, tca = path.dirname(fname), f"""{cdm["COMMON"]["TCA"][:19].replace("-", "").replace(":", "")}"""
-
-        with open(path.join(out_dir, f"""TCA_{tca}_{obj1["OBJECT_DESIGNATOR"]}.oem"""), "w") as fp:
+        oem1 = path.join(path.dirname(fname), fname.replace(".cdm", f"""_{obj1["OBJECT_DESIGNATOR"]}.oem"""))
+        with open(oem1, "w") as fp:
             fp.write(export_OEM(cfg[0], output1, obj1["OBJECT_DESIGNATOR"], obj1["OBJECT_NAME"], add_prop_cov=True))
 
-        with open(path.join(out_dir, f"""TCA_{tca}_{obj2["OBJECT_DESIGNATOR"]}.oem"""), "w") as fp:
+        oem2 = path.join(path.dirname(fname), fname.replace(".cdm", f"""_{obj2["OBJECT_DESIGNATOR"]}.oem"""))
+        with open(oem2, "w") as fp:
             fp.write(export_OEM(cfg[1], output2, obj2["OBJECT_DESIGNATOR"], obj2["OBJECT_NAME"], add_prop_cov=True))
     except Exception as exc:
         print(f"Error {fname}: {exc}")
