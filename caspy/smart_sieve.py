@@ -32,10 +32,10 @@ def init_process(*params):
     global _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window
     _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window = params
 
-    global _cdm_template, _object_map, _debug_mode, _debug_data
-    _cdm_template, _object_map = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm")), {}
-
+    global _cospar_to_norad, _norad_to_cospar, _debug_mode, _debug_data, _cdm_template
+    _cospar_to_norad, _norad_to_cospar = {}, {}
     _debug_mode = getenv("CASPY_DEBUG", "0") == "1"
+    _cdm_template = Template(filename=path.join(path.dirname(path.realpath(__file__)), "template.cdm"))
 
     # Load UT object ID catalog if it exists
     try:
@@ -43,25 +43,29 @@ def init_process(*params):
         with open(cat_file, "r") as fp:
             for line in fp.read().splitlines():
                 tok = line.split(",")
-                _object_map[tok[1]] = tok[0]
+                _cospar_to_norad[tok[1]] = tok[0]
+                _norad_to_cospar[tok[0]] = tok[1]
     except Exception as _:
         pass
 
 def screen_pair(params):
     global _output_path, _critical_dist, _body_radius, _pos_sigma, _vel_sigma, _extra_keys, _window
-    global _cdm_template, _object_map, _debug_mode, _debug_data
+    global _cdm_template, _cospar_to_norad, _debug_mode, _debug_data
 
     try:
         object1, object2, times = params
         states1, states2 = object1["states"], object2["states"]
 
         # If the OEM file had a COSPAR ID then map it to a NORAD ID else leave it as is
-        object1["headers"]["OBJECT_ID"] = _object_map.get(object1["headers"]["OBJECT_ID"], object1["headers"]["OBJECT_ID"])
-        object2["headers"]["OBJECT_ID"] = _object_map.get(object2["headers"]["OBJECT_ID"], object2["headers"]["OBJECT_ID"])
+        object1["headers"]["OBJECT_ID"] = _cospar_to_norad.get(object1["headers"]["OBJECT_ID"], object1["headers"]["OBJECT_ID"])
+        object2["headers"]["OBJECT_ID"] = _cospar_to_norad.get(object2["headers"]["OBJECT_ID"], object2["headers"]["OBJECT_ID"])
 
         # Skip cases where primary and secondary have the same object ID
         if (object1["headers"]["OBJECT_ID"] == object2["headers"]["OBJECT_ID"]):
             return(None)
+
+        object1["headers"]["COSPAR_ID"] = _norad_to_cospar.get(object1["headers"]["OBJECT_ID"], object1["headers"]["OBJECT_ID"])
+        object2["headers"]["COSPAR_ID"] = _norad_to_cospar.get(object2["headers"]["OBJECT_ID"], object2["headers"]["OBJECT_ID"])
 
         # Apogee/perigee filter
         apsis_pass, rp1, rp2 = apogee_filter(states1[0], states2[0], times[1] - times[0])
